@@ -78,6 +78,10 @@ export default async function (
     const lastHourlyTVL = calculateTVLWithAllExtraSections(lastHourlyTVLObject);
     if (currentTvl > 300e9 && excludedTvlId != protocol.id) {
       let errorMessage = `TVL of ${protocol.name} is over 300bn`
+      // debug Clearstar tvl spike
+      if (protocol.id === '6199') {
+        console.log('DEBUG - Clearstar', unixTimestamp, JSON.stringify(usdTokenBalances))
+      }
       Object.values(usdTokenBalances).forEach(tokenBalances => {
         for (const [token, value] of Object.entries(tokenBalances))
           if (value > 1e7) {
