@@ -5799,7 +5799,10 @@ const data5: Protocol[] = [
     twitter: "PleasingGolden",
     listedAt: 1765912421,
     dimensions: {
-      fees: "pleasing-gold",
+      fees: {
+        genuineSpikes: [["2026-04-23", "PGOLD Depeg"]],
+        adapter: "pleasing-gold"
+      }
     },
   },
   {
