@@ -80,7 +80,15 @@ async function storeDataWithWriter(
         handle = await fs.promises.open(tempFilePath, 'w');
         const flushBuffer = async () => {
             if (!buffer) return;
-            await handle!.write(buffer);
+            // Loop until the whole buffer is written: FileHandle.write may perform
+            // a short write (bytesWritten < length), and a temp file truncated here
+            // would be published as corrupt JSON by the rename below.
+            const data = Buffer.from(buffer);
+            let offset = 0;
+            while (offset < data.length) {
+                const { bytesWritten } = await handle!.write(data, offset, data.length - offset);
+                offset += bytesWritten;
+            }
             buffer = '';
         };
         await writeData(async (chunk: string) => {
