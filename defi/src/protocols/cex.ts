@@ -770,6 +770,13 @@ export const cexsData: Array<ICex> = [
     walletsLink: null,
     url: "https://bitvavo.com/en",
   },
+  {
+    name: "SCLiTE",
+    slug: "sclite",
+    coin: null,
+    walletsLink: null,
+    url: "https://sclite.io/",
+  },
 ];
 
 const cgNameListingIdMap: { [name: string]: string } = {

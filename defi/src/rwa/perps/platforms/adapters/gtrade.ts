@@ -1,6 +1,6 @@
 import type { PlatformAdapter, FundingEntry, ParsedPerpsMarket } from "../types";
 import { safeFloat, safeFetch } from "../types";
-import { fetchPythPricesBySymbol } from "./pyth";
+import { fetchPythPricesBySymbol, fetchPythPricesBySymbolPair } from "./pyth";
 import { applyOstiumFallbackPrices } from "./pyth";
 
 // gTrade (Gains Network) — Arbitrum (primary), Base, Polygon
@@ -52,8 +52,12 @@ interface GtradeTradingVars {
   collaterals: GtradeCollateral[];
 }
 
-// RWA group names on gTrade
-const RWA_GROUP_NAMES = /stock|indic|commod/i;
+// RWA group names on gTrade. Forex markets are included in the RWA perps product.
+const RWA_GROUP_NAMES = /stock|indic|commod|forex/i;
+
+export function isGtradeRwaGroupName(groupName: string): boolean {
+  return RWA_GROUP_NAMES.test(groupName);
+}
 
 // gTrade symbol → Pyth symbol aliases for known mismatches
 const PYTH_SYMBOL_ALIASES: Record<string, string> = {
@@ -70,6 +74,22 @@ const PYTH_SYMBOL_ALIASES: Record<string, string> = {
 function toPythSymbol(gtradeSymbol: string): string {
   const stripped = gtradeSymbol.replace(/_\d+$/, "");
   return PYTH_SYMBOL_ALIASES[stripped] ?? stripped;
+}
+
+export function toGtradePythPairKey(contract: string): { base: string; quote: string; key: string } | null {
+  const pair = contract.split(":")[1];
+  if (!pair) return null;
+
+  const [base, quote] = pair.split("-");
+  if (!base || !quote) return null;
+
+  const normalizedBase = toPythSymbol(base).toUpperCase();
+  const normalizedQuote = quote.toUpperCase();
+  return {
+    base: normalizedBase,
+    quote: normalizedQuote,
+    key: `${normalizedBase}/${normalizedQuote}`,
+  };
 }
 
 // gTrade symbol → Ostium symbol aliases for fallback pricing
@@ -149,7 +169,7 @@ function parseGtradeMarkets(data: GtradeTradingVars): ParsedPerpsMarket[] {
     const pair = pairs[i];
     const groupIdx = parseInt(pair.groupIndex, 10);
     const group = groups[groupIdx];
-    if (!group || !RWA_GROUP_NAMES.test(group.name)) continue;
+    if (!group || !isGtradeRwaGroupName(group.name)) continue;
 
     const contract = `gtrade:${pair.from}-${pair.to}`;
 
@@ -205,15 +225,21 @@ export const gtradeAdapter: PlatformAdapter = {
     // Fetch prices and volumes in parallel
     const rawSymbols = markets.map((m) => m.contract.split(":")[1]?.split("-")[0]).filter(Boolean);
     const pythSymbols = [...new Set(rawSymbols.map(toPythSymbol))];
-    const [pythPrices, volumes] = await Promise.all([
+    const pythPairs = markets.flatMap((m) => {
+      const pair = toGtradePythPairKey(m.contract);
+      return pair ? [{ base: pair.base, quote: pair.quote }] : [];
+    });
+    const [pythPrices, pythPairPrices, volumes] = await Promise.all([
       fetchPythPricesBySymbol(pythSymbols),
+      fetchPythPricesBySymbolPair(pythPairs),
       fetchGtradeVolumes(),
     ]);
 
     for (const m of markets) {
       const rawSym = m.contract.split(":")[1]?.split("-")[0] ?? "";
       const pythSym = toPythSymbol(rawSym).toUpperCase();
-      const price = pythPrices.get(pythSym) ?? 0;
+      const pythPair = toGtradePythPairKey(m.contract);
+      const price = (pythPair ? pythPairPrices.get(pythPair.key) : undefined) ?? pythPrices.get(pythSym) ?? 0;
       m.markPx = price;
       m.oraclePx = price;
       m.midPx = price;

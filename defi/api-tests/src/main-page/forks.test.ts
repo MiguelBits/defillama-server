@@ -7,6 +7,7 @@ import {
 } from '../../utils/testHelpers';
 import { validate } from '../../utils/validation';
 import { ApiResponse } from '../../utils/config/apiClient';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.MAIN_PAGE.BASE_URL);
 
@@ -20,6 +21,10 @@ describe('Main Page API - Forks', () => {
   }, 90000);
 
   describe('Basic Response Validation', () => {
+    it('should expose CORS headers', () => {
+      expectCorsHeaders(forksResponse);
+    });
+
     it('should return successful response with valid structure', () => {
       expectSuccessfulResponse(forksResponse);
       expect(isForksResponse(forksResponse.data)).toBe(true);

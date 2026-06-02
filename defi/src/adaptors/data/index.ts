@@ -6,6 +6,21 @@ import parentProtocols from "../../protocols/parentProtocols";
 import { chainCoingeckoIds, getChainDisplayName } from "../../utils/normalizeChain";
 import { baseIconsUrl } from "../../constants";
 
+// When the same adapter key exists in multiple types, the types in this list have higher priority
+const ADAPTER_TYPE_IMPORT_PRIORITY_HIGH_TO_LOW: AdapterType[] = [
+  AdapterType.DEXS,
+  AdapterType.FEES,
+]
+
+function getDimensionsImportAdapterTypesInPriorityOrder(): string[] {
+  const importTypes: any[] = Object.keys(dimensions_imports)
+  const prioritySet = new Set(ADAPTER_TYPE_IMPORT_PRIORITY_HIGH_TO_LOW)
+  const others = importTypes.filter((t) => !prioritySet.has(t))
+  const prioritized = [...ADAPTER_TYPE_IMPORT_PRIORITY_HIGH_TO_LOW]
+    .reverse()
+    .filter((t) => importTypes.includes(t))
+  return [...others, ...prioritized]
+}
 
 let dimensionsConfig: any
 getDimensionsConfig()
@@ -159,15 +174,15 @@ const _getAdapterData = (adapterType: AdapterType): AdaptorData => {
 
 function addImportsDataToMapping() {
   const allImportsSquashed: any = {}
-  Object.entries(dimensions_imports).forEach(([adapterType, imports]) => {
-
+  getDimensionsImportAdapterTypesInPriorityOrder().forEach((adapterType) => {
+    const dimensionsImports: any = dimensions_imports;
+    const imports = dimensionsImports[adapterType]
     Object.entries(imports).forEach(([adapterKey, adapterObj]: any) => {
       adapterObj.module = { default: adapterObj.module }
       allImportsSquashed[adapterKey] = adapterObj
     })
 
     if (!dimensionsConfig[adapterType]) dimensionsConfig[adapterType] = {}
-
     dimensionsConfig[adapterType].imports = imports
   })
 

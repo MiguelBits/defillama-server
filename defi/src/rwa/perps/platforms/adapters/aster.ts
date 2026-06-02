@@ -3,14 +3,14 @@ import { safeFloat, safeFetch, pctChange } from "../types";
 
 // Aster — Binance USD-M-style perp DEX on BNB Chain.
 // Docs: https://docs.asterdex.com/
-// RWA assets are tagged in `underlyingSubType`: STOCK | HK_STOCK | RWA.
+// RWA assets are tagged in `underlyingSubType`: STOCK | HK_STOCK | RWA | ETF.
 // Margin: USDT/USD1 ($1-pegged) | Funding: 8h cadence.
 
 export const ASTER_MAKER_FEE = 0.0002;
 export const ASTER_TAKER_FEE = 0.0005;
 
 const ASTER_API = "https://fapi.asterdex.com/fapi/v1";
-const RWA_TAGS = new Set(["STOCK", "HK_STOCK", "RWA"]);
+const RWA_TAGS = new Set(["STOCK", "HK_STOCK", "RWA", "ETF"]);
 
 // ---------------------------------------------------------------------------
 // Raw API types

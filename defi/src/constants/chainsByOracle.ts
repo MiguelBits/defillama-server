@@ -589,6 +589,10 @@ const chainsByOracle: Record<string, Array<string>> = {
   "Orakl": [
     "Klaytn",
     "Bitkub",
+  ],
+  "Harbor": [
+    "MegaETH",
+    "Ethereum",
   ]
 };
 

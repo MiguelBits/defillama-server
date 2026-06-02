@@ -3,38 +3,15 @@ import { getProtocolTvl } from "./utils/getProtocolTvl";
 import parentProtocolsList from "./protocols/parentProtocols";
 import type { IParentProtocol } from "./protocols/types";
 import type { IProtocol, LiteProtocol, ProtocolTvls } from "./types";
-import {
-  chainCoingeckoIds,
-  currentChainLabelsList,
-  getChainDisplayName,
-  getChainKeyFromLabel,
-  replaceChainNamesForOraclesByChain,
-} from "./utils/normalizeChain";
+import { chainCoingeckoIds, currentChainLabelsList, replaceChainNamesForOraclesByChain } from "./utils/normalizeChain";
 import { extraSections } from "./utils/normalizeChain";
 import fetch from "node-fetch";
 import { excludeProtocolInCharts, hiddenCategoriesFromUISet } from "./utils/excludeProtocols";
 import protocols from "./protocols/data";
 import { readRouteData } from "./api2/cache/file-cache";
+import { addAdjustedChainTvls, getVisibleChainLabels, hasDimensionsChainVisibility } from "./utils/visibleChains";
 
-export function hasDimensionsChainVisibility(chainAggData: any = {}) {
-  if (typeof chainAggData !== "object" || chainAggData === null) return false;
-
-  for (const adapterType in chainAggData) {
-    const adapterAggData = chainAggData[adapterType];
-    if (typeof adapterAggData !== "object" || adapterAggData === null) continue;
-
-    for (const recordType in adapterAggData) {
-      const recordTypeAggData = adapterAggData[recordType];
-      if (typeof recordTypeAggData !== "object" || recordTypeAggData === null) continue;
-
-      for (const _key in recordTypeAggData) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
+export { getVisibleChainLabels, hasDimensionsChainVisibility };
 
 function hasDimensionsChainAggData(dimensionsChainAggData: any = {}) {
   if (typeof dimensionsChainAggData !== "object" || dimensionsChainAggData === null) return false;
@@ -45,62 +22,6 @@ function hasDimensionsChainAggData(dimensionsChainAggData: any = {}) {
 
   return false;
 }
-
-function getVisibleChainLabel(chain: string) {
-  if (!chain) return null;
-
-  return getChainDisplayName(getChainKeyFromLabel(chain), true);
-}
-
-export function getVisibleChainLabels(
-  protocolChainTvls: { [chain: string]: number },
-  dimensionsChainAggData: any = {},
-  fallbackChainLabels: string[] = []
-) {
-  const normalizedProtocolChainTvls = new Map<string, number>();
-  for (const chain in protocolChainTvls) {
-    const visibleChainLabel = getVisibleChainLabel(chain);
-    if (!visibleChainLabel) continue;
-
-    normalizedProtocolChainTvls.set(
-      visibleChainLabel,
-      (normalizedProtocolChainTvls.get(visibleChainLabel) ?? 0) + protocolChainTvls[chain]
-    );
-  }
-
-  const protocolBackedChainEntries = Array.from(normalizedProtocolChainTvls.entries());
-  protocolBackedChainEntries.sort((a, b) => b[1] - a[1]);
-  const protocolBackedChains: string[] = [];
-  for (const [chain] of protocolBackedChainEntries) {
-    protocolBackedChains.push(chain);
-  }
-
-  const visibleChains = new Set(protocolBackedChains);
-  const dimensionBackedChains: string[] = [];
-  for (const chainKey in dimensionsChainAggData) {
-    const chainAggData = dimensionsChainAggData[chainKey];
-    if (!hasDimensionsChainVisibility(chainAggData)) continue;
-
-    const chainLabel = getVisibleChainLabel(chainKey);
-    if (!chainLabel || chainCoingeckoIds[chainLabel] === undefined || visibleChains.has(chainLabel)) continue;
-
-    visibleChains.add(chainLabel);
-    dimensionBackedChains.push(chainLabel);
-  }
-  dimensionBackedChains.sort((a, b) => a.localeCompare(b));
-
-  const fallbackChains: string[] = [];
-  for (const chain of fallbackChainLabels) {
-    const chainLabel = getVisibleChainLabel(chain);
-    if (!chainLabel || visibleChains.has(chainLabel)) continue;
-
-    visibleChains.add(chainLabel);
-    fallbackChains.push(chainLabel);
-  }
-
-  return protocolBackedChains.concat(dimensionBackedChains, fallbackChains);
-}
-
 export async function storeGetProtocols({
   getCoinMarkets,
   getLastHourlyRecord,
@@ -192,21 +113,7 @@ export async function storeGetProtocols({
 
     protocolCategoriesSet.add(p.category);
     if (!excludeProtocolInCharts(p.category)) {
-      p.chains.forEach((c: string) => {
-        chains[c] = (chains[c] ?? 0) + (p.chainTvls[c]?.tvl ?? 0);
-
-        if (p.chainTvls[`${c}-liquidstaking`]) {
-          chains[c] = (chains[c] ?? 0) - (p.chainTvls[`${c}-liquidstaking`]?.tvl ?? 0);
-        }
-
-        if (p.chainTvls[`${c}-doublecounted`]) {
-          chains[c] = (chains[c] ?? 0) - (p.chainTvls[`${c}-doublecounted`]?.tvl ?? 0);
-        }
-
-        if (p.chainTvls[`${c}-dcAndLsOverlap`]) {
-          chains[c] = (chains[c] ?? 0) + (p.chainTvls[`${c}-dcAndLsOverlap`]?.tvl ?? 0);
-        }
-      });
+      addAdjustedChainTvls(chains, p.chainTvls, p.chains);
     }
   });
 

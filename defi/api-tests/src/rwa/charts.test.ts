@@ -1,19 +1,35 @@
 import { createApiClient, ApiResponse } from '../../utils/config/apiClient';
 import { endpoints } from '../../utils/config/endpoints';
-import { RwaCurrentResponse, RwaIdMap } from './types';
+import { RwaCurrentResponse, RwaIdMap, RwaListResponse } from './types';
 import {
   expectSuccessfulResponse,
   expectNonEmptyArray,
   expectValidTimestamp,
+  expectFreshData,
 } from '../../utils/testHelpers';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.RWA.BASE_URL);
+
+// Asset-breakdown endpoints return { [metricKey]: Array<{timestamp, ...assets}> }
+function expectAssetBreakdownShape(data: any) {
+  expect(typeof data).toBe('object');
+  expect(data).not.toBeNull();
+  expect(Array.isArray(data)).toBe(false);
+
+  const arrayValuedKeys = Object.keys(data).filter((k) => Array.isArray(data[k]));
+  expect(arrayValuedKeys.length).toBeGreaterThan(0);
+}
 
 describe('RWA API - Chart by ID', () => {
   let currentResponse: ApiResponse<RwaCurrentResponse>;
 
   beforeAll(async () => {
     currentResponse = await apiClient.get<RwaCurrentResponse>(endpoints.RWA.CURRENT);
+  });
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(currentResponse);
   });
 
   it('should return chart data for a valid RWA ID', async () => {
@@ -37,6 +53,10 @@ describe('RWA API - Chart by Name', () => {
     idMapResponse = await apiClient.get<RwaIdMap>(endpoints.RWA.ID_MAP);
   });
 
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(idMapResponse);
+  });
+
   it('should return chart data for a valid RWA name', async () => {
     const names = Object.keys(idMapResponse.data);
     expect(names.length).toBeGreaterThan(0);
@@ -54,10 +74,31 @@ describe('RWA API - Chart by Name', () => {
 });
 
 describe('RWA API - Breakdown Charts', () => {
+  let chainBreakdownResponse: ApiResponse<any>;
+  beforeAll(async () => {
+    chainBreakdownResponse = await apiClient.get(endpoints.RWA.CHART_CHAIN_BREAKDOWN);
+  });
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(chainBreakdownResponse);
+  });
+
   it('should return chain breakdown chart data', async () => {
     const response = await apiClient.get(endpoints.RWA.CHART_CHAIN_BREAKDOWN);
     expectSuccessfulResponse(response);
     expect(Array.isArray(response.data)).toBe(true);
+  });
+
+  it('should have a fresh latest datapoint on chain-breakdown (within 2 days)', async () => {
+    const response = await apiClient.get<Array<{ timestamp?: number; date?: number }>>(
+      endpoints.RWA.CHART_CHAIN_BREAKDOWN
+    );
+    if (response.status !== 200 || !Array.isArray(response.data) || response.data.length === 0) return;
+    const timestamps = response.data
+      .map((p) => Number(p.timestamp ?? p.date))
+      .filter((n) => Number.isFinite(n));
+    if (timestamps.length === 0) return;
+    expectFreshData(timestamps, 86400 * 2);
   });
 
   it('should return category breakdown chart data', async () => {
@@ -68,6 +109,12 @@ describe('RWA API - Breakdown Charts', () => {
 
   it('should return platform breakdown chart data', async () => {
     const response = await apiClient.get(endpoints.RWA.CHART_PLATFORM_BREAKDOWN);
+    expectSuccessfulResponse(response);
+    expect(Array.isArray(response.data)).toBe(true);
+  });
+
+  it('should return assetGroup breakdown chart data', async () => {
+    const response = await apiClient.get(endpoints.RWA.CHART_ASSET_GROUP_BREAKDOWN);
     expectSuccessfulResponse(response);
     expect(Array.isArray(response.data)).toBe(true);
   });
@@ -106,12 +153,29 @@ describe('RWA API - Breakdown Charts', () => {
 });
 
 describe('RWA API - Chart by Chain', () => {
+  let chainResponse: ApiResponse<any>;
+  beforeAll(async () => {
+    chainResponse = await apiClient.get(endpoints.RWA.CHART_BY_CHAIN('Ethereum'));
+  });
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(chainResponse);
+  });
+
   it('should return chart data for Ethereum', async () => {
     const response = await apiClient.get(endpoints.RWA.CHART_BY_CHAIN('Ethereum'));
     // May be 404 if no data for this chain, which is acceptable
     expect([200, 404]).toContain(response.status);
     if (response.status === 200) {
       expect(Array.isArray(response.data)).toBe(true);
+    }
+  });
+
+  it('should return chain asset-breakdown chart data', async () => {
+    const response = await apiClient.get(endpoints.RWA.CHART_BY_CHAIN_ASSET_BREAKDOWN('Ethereum'));
+    expect([200, 404]).toContain(response.status);
+    if (response.status === 200) {
+      expectAssetBreakdownShape(response.data);
     }
   });
 });
@@ -121,6 +185,10 @@ describe('RWA API - Chart by Category', () => {
 
   beforeAll(async () => {
     currentResponse = await apiClient.get<RwaCurrentResponse>(endpoints.RWA.CURRENT);
+  });
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(currentResponse);
   });
 
   it('should return chart data for a valid category', async () => {
@@ -136,6 +204,94 @@ describe('RWA API - Chart by Category', () => {
       expect(Array.isArray(response.data)).toBe(true);
     }
   });
+
+  it('should return category asset-breakdown chart data', async () => {
+    const withCategory = currentResponse.data.find(
+      (item) => item.category && item.category.length > 0
+    );
+    if (!withCategory) return;
+
+    const category = withCategory.category![0];
+    const response = await apiClient.get(endpoints.RWA.CHART_BY_CATEGORY_ASSET_BREAKDOWN(category));
+    expect([200, 404]).toContain(response.status);
+    if (response.status === 200) {
+      expectAssetBreakdownShape(response.data);
+    }
+  });
+});
+
+describe('RWA API - Chart by Platform', () => {
+  let listResponse: ApiResponse<RwaListResponse>;
+
+  beforeAll(async () => {
+    listResponse = await apiClient.get<RwaListResponse>(endpoints.RWA.LIST);
+  });
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(listResponse);
+  });
+
+  it('should return chart data for a valid platform', async () => {
+    const platforms = listResponse.data.platforms;
+    if (!platforms || platforms.length === 0) return;
+
+    const platform = platforms[0];
+    const response = await apiClient.get(endpoints.RWA.CHART_BY_PLATFORM(platform));
+    expect([200, 404]).toContain(response.status);
+    if (response.status === 200) {
+      expect(Array.isArray(response.data)).toBe(true);
+    }
+  });
+
+  it('should return platform asset-breakdown chart data', async () => {
+    const platforms = listResponse.data.platforms;
+    if (!platforms || platforms.length === 0) return;
+
+    const platform = platforms[0];
+    const response = await apiClient.get(endpoints.RWA.CHART_BY_PLATFORM_ASSET_BREAKDOWN(platform));
+    expect([200, 404]).toContain(response.status);
+    if (response.status === 200) {
+      expectAssetBreakdownShape(response.data);
+    }
+  });
+});
+
+describe('RWA API - Chart by Asset Group', () => {
+  let listResponse: ApiResponse<RwaListResponse>;
+
+  beforeAll(async () => {
+    listResponse = await apiClient.get<RwaListResponse>(endpoints.RWA.LIST);
+  });
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(listResponse);
+  });
+
+  it('should return chart data for a valid assetGroup', async () => {
+    const assetGroups = listResponse.data.assetGroups;
+    if (!assetGroups || assetGroups.length === 0) return;
+
+    const assetGroup = assetGroups[0];
+    const response = await apiClient.get(endpoints.RWA.CHART_BY_ASSET_GROUP(assetGroup));
+    expect([200, 404]).toContain(response.status);
+    if (response.status === 200) {
+      expect(Array.isArray(response.data)).toBe(true);
+    }
+  });
+
+  it('should return assetGroup asset-breakdown chart data', async () => {
+    const assetGroups = listResponse.data.assetGroups;
+    if (!assetGroups || assetGroups.length === 0) return;
+
+    const assetGroup = assetGroups[0];
+    const response = await apiClient.get(
+      endpoints.RWA.CHART_BY_ASSET_GROUP_ASSET_BREAKDOWN(assetGroup)
+    );
+    expect([200, 404]).toContain(response.status);
+    if (response.status === 200) {
+      expectAssetBreakdownShape(response.data);
+    }
+  });
 });
 
 describe('RWA API - Chart Asset', () => {
@@ -143,6 +299,10 @@ describe('RWA API - Chart Asset', () => {
 
   beforeAll(async () => {
     currentResponse = await apiClient.get<RwaCurrentResponse>(endpoints.RWA.CURRENT);
+  });
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(currentResponse);
   });
 
   it('should return asset chart data for a valid ID', async () => {

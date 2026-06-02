@@ -1524,7 +1524,9 @@ export const chainCoingeckoIds = {
     cmcId: "1831",
     url: "https://bch.info/en/",
     dimensions: {
-      'active-users': 'bch' 
+      'active-users': 'bch',
+      fees: "bitcoin-cash",
+      incentives: "bitcoin-cash",
     }
   },
   "Litecoin": {
@@ -1547,6 +1549,7 @@ export const chainCoingeckoIds = {
     url: "https://dogecoin.com/",
     dimensions: {
       fees: "doge",
+      incentives: "doge",
     },
   },
   "Obyte": {
@@ -1791,6 +1794,7 @@ export const chainCoingeckoIds = {
     categories: ["EVM", "Cosmos"],
     twitter: "CantoPublic",
     url: "https://canto.io/",
+    deadUrl: true,
     dimensions: {
       fees: "canto",
     },
@@ -2230,6 +2234,8 @@ export const chainCoingeckoIds = {
     url: "https://zksync.io/",
     dimensions: {
       fees: "zksync-era",
+      "active-users": "zksync-era",
+      "new-users": "zksync-era",
     },
   },
   "Polygon zkEVM": {
@@ -2811,6 +2817,9 @@ export const chainCoingeckoIds = {
     cmcId: "131",
     twitter: "dashpay",
     url: "https://www.dash.org/",
+    dimensions: {
+      fees: "dash",
+    },
   },
   "Bostrom": {
     geckoId: "bostrom",
@@ -3181,6 +3190,8 @@ export const chainCoingeckoIds = {
     dimensions: {
       fees: "imx",
       'nft-volume': 'immutablex',
+      "active-users": "immutablex",
+      "new-users": "immutablex",
     },
   },
   "Zora": {
@@ -3568,6 +3579,8 @@ export const chainCoingeckoIds = {
     chainId: 8822,
     dimensions: {
       fees: "iota_evm",
+      "active-users": "iota_evm",
+      "new-users": "iota_evm",
     },
   },
   "Ham": {
@@ -3948,6 +3961,8 @@ export const chainCoingeckoIds = {
     chainId: 480,
     dimensions: {
       fees: "worldchain",
+      "active-users": "worldchain",
+      "new-users": "worldchain",
     },
   },
   "ApeChain": {
@@ -4298,6 +4313,8 @@ export const chainCoingeckoIds = {
     chainId: 41923,
     dimensions: {
       fees: "edu-chain",
+      "active-users": "edu-chain",
+      "new-users": "edu-chain",
     },
   },
   "Fluence": {
@@ -4611,6 +4628,8 @@ export const chainCoingeckoIds = {
     chainId: 177,
     dimensions: {
       fees: "hashkey",
+      "active-users": "hashkey",
+      "new-users": "hashkey",
     },
   },
   "Mind Network": {
@@ -4682,7 +4701,9 @@ export const chainCoingeckoIds = {
     url: "https://plume.org/",
     chainId: 98866,
     dimensions: {
-      fees: "plume"
+      fees: "plume",
+      "active-users": "plume",
+      "new-users": "plume",
     }
   },
   "Perennial": {
@@ -5135,6 +5156,8 @@ export const chainCoingeckoIds = {
     chainId: 291,
     dimensions: {
       fees: "orderly-network",
+      "active-users": "orderly-network",
+      "new-users": "orderly-network",
     },
   },
   "Camp Network": {
@@ -5266,6 +5289,9 @@ export const chainCoingeckoIds = {
     url: "https://gatechain.io/gatelayer",
     github: ["gatechain"],
     chainId: 10088,
+    dimensions: {
+      fees: "gatelayer",
+    },
   },
   "Xone Chain": {
     geckoId: "xoc",
@@ -5874,6 +5900,9 @@ export const chainCoingeckoIds = {
     github: ["IgraLabs"],
     twitter: "IgraNetwork",
     url: "https://igralabs.com",
+    dimensions: {
+      fees: "igra",
+    },
   },
   /*"BlockDAG": {
     geckoId: "blockdag",
@@ -6065,10 +6094,57 @@ export const chainCoingeckoIds = {
     geckoId: null,
     symbol: "SRX",
     cmcId: null,
+    categories: ["EVM"],
     twitter: "sentrixchain",
     url: "https://sentrixchain.com/",
     github: ["sentrix-labs"],
     chainId: 7119,
+  },
+  "Defi Oracle Meta": {
+    geckoId: null,
+    symbol: null,
+    cmcId: null,
+    categories: ["EVM"],
+    twitter: null,
+    url: "https://info.defi-oracle.io/",
+    chainId: 138,
+  },
+  "Vara": {
+    geckoId: "vara-network",
+    symbol: "VARA",
+    cmcId: "28067",
+    twitter: "VaraNetwork",
+    url: "https://start.vara.network/",
+  },
+  "MyRx": {
+    geckoId: null,
+    symbol: "MRT",
+    cmcId: null,
+    categories: ["EVM"],
+    twitter: "myrxwallet",
+    url: "https://myrxwallet.io/",
+    chainId: 8472,
+    github: ["myrxwallet"],
+  },
+  "Monero": {
+    geckoId: "monero",
+    symbol: "XMR",
+    cmcId: "328",
+    twitter: "monero",
+    url: "https://www.getmonero.org/",
+    github: ["monero-project"],
+    dimensions: {
+      fees: "monero",
+    },
+  },
+  "INRI": {
+    geckoId: null,
+    symbol: null,
+    cmcId: null,
+    categories: ["EVM"],
+    twitter: "inrichain",
+    url: "https://inri.life",
+    chainId: 3777,
   },
 } as unknown as ChainCoinGekcoIds;
 
@@ -6256,6 +6332,7 @@ const chainLabelMap = {
   "mtt_network": "MTT Network",
   "hsk": "HashKey Chain",
   "wchain": "W Chain",
+  "mrt": "MyRx",
   //"hashkey": "HashKey Chain", not possible to have two different chains with the same name
   "fhe": "Mind Network",
   "ao": "AO",
@@ -6326,6 +6403,8 @@ const chainLabelMap = {
   "rise": "RISE",
   "aleo": "Aleo",
   "srx": "Sentrix",
+  "dfio_meta_main": "Defi Oracle Meta",
+  "inri": "INRI",
 } as { [key: string]: string }
 
 // When we decide to change the display name of a chain, we add the mapping for the new name here

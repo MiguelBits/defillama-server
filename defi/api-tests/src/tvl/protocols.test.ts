@@ -15,6 +15,7 @@ import {
 import { validate, isValid } from '../../utils/validation';
 import { ApiResponse } from '../../utils/config/apiClient';
 import { z } from 'zod';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.TVL.BASE_URL);
 const TVL_ENDPOINTS = endpoints.TVL;
@@ -28,6 +29,10 @@ describe('TVL API - Protocols', () => {
   });
 
   describe('Basic Response Validation', () => {
+    it('should expose CORS headers', () => {
+      expectCorsHeaders(protocolsResponse);
+    });
+
     it('should return successful response with valid structure', () => {
       expectSuccessfulResponse(protocolsResponse);
       expectArrayResponse(protocolsResponse);
@@ -279,6 +284,10 @@ describe('TVL API - Protocol Details', () => {
       })
     );
   }, 60000);
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(protocolResponses[testProtocols[0]]);
+  });
 
   describe('Basic Response Validation', () => {
     testProtocols.forEach((slug) => {

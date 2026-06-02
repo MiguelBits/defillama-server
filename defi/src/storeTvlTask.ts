@@ -20,7 +20,7 @@ const v8 = require('v8');
 
 const maxRetries = 2;
 
-const INTERNAL_CACHE_FILE = 'tvl-adapter-cache/sdk-cache.json'
+const INTERNAL_CACHE_FILE = 'tvl-adapter-cache/sdk-cache-v1.json'
 const projectPath = path.resolve(__dirname, '../');
 const runOnlyAdapters = process.env.RUN_ONLY_ADAPTERS ? process.env.RUN_ONLY_ADAPTERS.split(',').map((a: string) => a.trim()) : []
 const forcedRun = process.env.FORCED_RUN === 'true' || false
@@ -210,7 +210,7 @@ async function rejectAfterXMinutes(promiseFn: any, minutes = 10) {
 
 async function initializeSdkInternalCache() {
   let currentCache = await sdk.cache.readCache(INTERNAL_CACHE_FILE)
-  sdk.log('cache size:', JSON.stringify(currentCache).length, 'chains:', Object.keys(currentCache))
+  sdk.log('cache size:', JSON.stringify(currentCache).length, 'chains:', Object.keys(currentCache).length)
   const ONE_WEEK = 60 * 60 * 24 * 7
   if (!currentCache || !currentCache.startTime || (Date.now() / 1000 - currentCache.startTime > ONE_WEEK)) {
     currentCache = {

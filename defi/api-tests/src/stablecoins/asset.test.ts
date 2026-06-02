@@ -14,6 +14,7 @@ import {
 } from '../../utils/testHelpers';
 import { validate } from '../../utils/validation';
 import { ApiResponse } from '../../utils/config/apiClient';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 describe('Stablecoins API - Asset', () => {
   // Configure test assets - keep just one for speed, add more for thoroughness
@@ -30,6 +31,10 @@ describe('Stablecoins API - Asset', () => {
       })
     );
   }, 60000);
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(assetResponses[testAssets[0]]);
+  });
 
   describe('Basic Response Validation', () => {
     testAssets.forEach((asset) => {

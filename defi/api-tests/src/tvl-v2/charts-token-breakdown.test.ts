@@ -8,9 +8,11 @@ import {
   expectNonEmptyArray,
   expectValidNumber,
   expectValidTimestamp,
+  expectFreshData,
 } from '../../utils/testHelpers';
 import { validate } from '../../utils/validation';
 import { ApiResponse } from '../../utils/config/apiClient';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.TVL_V2.BASE_URL);
 const TVL_V2_ENDPOINTS = endpoints.TVL_V2;
@@ -28,6 +30,10 @@ describe('TVL V2 API - Chart Token Breakdown', () => {
       })
     );
   }, 60000);
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(responses[testProtocols[0]]);
+  });
 
   describe('Basic Response Validation', () => {
     testProtocols.forEach((protocolSlug) => {
@@ -77,6 +83,12 @@ describe('TVL V2 API - Chart Token Breakdown', () => {
           for (let i = 1; i < data.length; i++) {
             expect(data[i][0]).toBeGreaterThanOrEqual(data[i - 1][0]);
           }
+        });
+
+        it('should have a fresh latest datapoint (within 1 day)', () => {
+          const data = responses[protocolSlug].data;
+          if (data.length === 0) return;
+          expectFreshData(data.map(([ts]) => ts), 86400);
         });
 
         it('should return token amounts in native units with currency=token', async () => {

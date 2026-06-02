@@ -1,6 +1,7 @@
 import * as HyperExpress from 'hyper-express';
-import { readRouteData, getCacheVersion, readPGCacheForId, PGCacheRecord } from './file-cache';
+import { readRouteData, getCacheVersion, readPGCacheForId, readFlowsForId, PGCacheRecord } from './file-cache';
 import { rwaSlug } from './utils';
+import { trimLeadingZeros } from './cron';
 
 const webserver = new HyperExpress.Server();
 const port = +(process.env.RWA_PORT ?? 5002);
@@ -188,19 +189,17 @@ function setRoutes(router: HyperExpress.Router): void {
             if (!pgCache) {
                 return errorResponse(res, `Asset "${id}" not found`, 404);
             }
-            // Convert pg-cache map to sorted array
-            const data: Array<{ timestamp: number; onChainMcap: number | null; activeMcap: number | null; defiActiveTvl: number | null; chains: PGCacheRecord['chains'] }> =
-                Object.entries(pgCache)
-                    .map(([timestamp, record]) => ({ timestamp: Number(timestamp), ...record }))
-                    .sort((a, b) => a.timestamp - b.timestamp);
-            while (data.length > 0) {
-                const first = data[0];
-                if (first.onChainMcap === 0 && first.defiActiveTvl === 0 && (!first.activeMcap || first.activeMcap === 0)) {
-                    data.shift();
-                } else {
-                    break;
-                }
-            }
+            const sorted = Object.entries(pgCache)
+                .map(([timestamp, record]) => ({ timestamp: Number(timestamp), ...record }))
+                .sort((a, b) => a.timestamp - b.timestamp);
+            const data = trimLeadingZeros(sorted) as Array<{
+                timestamp: number;
+                onChainMcap: number | null;
+                activeMcap: number | null;
+                defiActiveTvl: number | null;
+                totalSupply: number | null;
+                chains: PGCacheRecord['chains'];
+            }>;
             // Null out per-series leading zeros so charts don't render a flat-zero
             // pre-data line for series that started later than others.
             for (const key of ['onChainMcap', 'activeMcap', 'defiActiveTvl'] as const) {
@@ -287,6 +286,34 @@ function setRoutes(router: HyperExpress.Router): void {
             }
             const key = rwaSlug(assetGroup);
             return fileResponse(`charts/assetGroup-asset-breakdown/${key}.json`, res, 30);
+        })
+    );
+
+    // Daily net-flow time-series for one RWA over [start, end].
+    // Series is pre-computed in cron (see storeFlowsForIdFromChainRecords) and
+    // served from disk; this route filters by the requested window in-memory.
+    router.get(
+        '/flows/:id',
+        errorWrapper(async (req, res) => {
+            const { id } = req.params;
+            if (!id) return errorResponse(res, 'Missing id parameter', 400);
+
+            const now = Math.floor(Date.now() / 1000);
+            const startTs = Number(req.query.start);
+            const endTs = Number(req.query.end) || now;
+            if (!Number.isFinite(startTs) || startTs <= 0) {
+                return errorResponse(res, 'Missing or invalid `start` query param (unix seconds)', 400);
+            }
+            if (!Number.isFinite(endTs) || endTs < startTs) {
+                return errorResponse(res, 'Invalid `end` query param', 400);
+            }
+
+            const series = await readFlowsForId(String(id));
+            if (!series) {
+                return errorResponse(res, `Flows for "${id}" not found`, 404);
+            }
+            const data = series.filter((p: any) => p.timestamp >= startTs && p.timestamp <= endTs);
+            return successResponse(res, { id, start: startTs, end: endTs, data }, 30);
         })
     );
 

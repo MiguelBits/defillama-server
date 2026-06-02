@@ -1,11 +1,21 @@
 import { createApiClient } from '../../utils/config/apiClient';
 import { endpoints } from '../../utils/config/endpoints';
 import { expectSuccessfulResponse } from '../../utils/testHelpers';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.BRIDGES.BASE_URL);
 
 describe('Bridges API - Volume and Stats', () => {
   const testChains = ['Ethereum', 'arbitrum', 'optimism'];
+
+  let corsResponse: any;
+  beforeAll(async () => {
+    corsResponse = await apiClient.get(endpoints.BRIDGES.BRIDGE_VOLUME('Ethereum'));
+  }, 30000);
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(corsResponse);
+  });
 
   describe('Bridge Volume by Chain', () => {
     testChains.forEach((chain) => {

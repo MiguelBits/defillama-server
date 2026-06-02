@@ -12,6 +12,10 @@ jest.mock("node-fetch", () => ({
   ),
 }));
 
+jest.mock("../../utils/coinsApi", () => ({
+  fetchMcaps: jest.fn(async () => ({})),
+}));
+
 import { readRouteData, storeRouteData } from "../cache/file-cache";
 import { genFormattedChains } from "./genFormattedChains";
 
@@ -42,7 +46,28 @@ describe("genFormattedChains", () => {
       }
 
       if (route === "/lite/charts/Ethereum") {
-        return { tvl: [[1, 100], [2, 110]] };
+        const now = Math.floor(Date.now() / 1e3);
+        const day = 24 * 60 * 60;
+        return {
+          tvl: [
+            [now - 30 * day, 70],
+            [now - 7 * day, 80],
+            [now - day, 90],
+            [now, 110],
+          ],
+          borrowed: [
+            [now - 30 * day, 10],
+            [now - 7 * day, 15],
+            [now - day, 25],
+            [now, 30],
+          ],
+          staking: [
+            [now - 30 * day, 2],
+            [now - 7 * day, 4],
+            [now - day, 5],
+            [now, 7],
+          ],
+        };
       }
 
       if (route === "/lite/charts/Hyperliquid L1") {
@@ -71,5 +96,34 @@ describe("genFormattedChains", () => {
 
     expect(evmData.chainsUnique).toContain("Hyperliquid L1");
     expect(evmData.chainsUnique).not.toContain("HyperEVM");
+  });
+
+  test("writes table-only chains2 files with current extra tvls and without chart history", async () => {
+    await genFormattedChains();
+
+    const tableCall = mockedStoreRouteData.mock.calls.find(([route]) => route === "/chains2/All/table");
+    expect(tableCall).toBeDefined();
+
+    const tableData = tableCall?.[1] as any;
+    const ethereum = tableData.chainTvls.find((chain: any) => chain.name === "Ethereum");
+
+    expect(tableData.stackedDataset).toBeUndefined();
+    expect(tableData.tvlTypes).toBeUndefined();
+    expect(tableData.chainsUnique).toEqual(["Ethereum", "Hyperliquid L1"]);
+    expect(tableData.chainsGroupbyParent).toBeDefined();
+    expect(ethereum.extraTvl).toEqual({
+      borrowed: {
+        tvl: 30,
+        tvlPrevDay: 25,
+        tvlPrevWeek: 15,
+        tvlPrevMonth: 10,
+      },
+      staking: {
+        tvl: 7,
+        tvlPrevDay: 5,
+        tvlPrevWeek: 4,
+        tvlPrevMonth: 2,
+      },
+    });
   });
 });

@@ -15,6 +15,7 @@ import {
 } from '../../utils/testHelpers';
 import { validate } from '../../utils/validation';
 import { ApiResponse } from '../../utils/config/apiClient';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 describe('Stablecoins API - Dominance', () => {
   // Configure test chains - keep just one for speed, add more for thoroughness
@@ -31,6 +32,10 @@ describe('Stablecoins API - Dominance', () => {
       })
     );
   }, 60000);
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(dominanceResponses[testChains[0]]);
+  });
 
   describe('Basic Response Validation', () => {
     testChains.forEach((chain) => {

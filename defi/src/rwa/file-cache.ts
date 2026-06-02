@@ -99,6 +99,13 @@ async function storeDataWithWriter(
     }
 }
 
+async function storeDataStrict(subPath: string, data: any): Promise<void> {
+    const filePath = path.join(VERSIONED_CACHE_DIR, subPath);
+    const dirPath = path.dirname(filePath);
+    await ensureDirExists(dirPath);
+    await fs.promises.writeFile(filePath, JSON.stringify(data));
+}
+
 async function readFileData(subPath: string, options: {
     skipErrorLog?: boolean;
     readAsArrayBuffer?: boolean;
@@ -154,6 +161,7 @@ export function getCacheVersion(): string {
 // Sync metadata for tracking incremental updates
 const SYNC_METADATA_FILE = 'sync-metadata.json';
 const PG_SYNC_METADATA_FILE = 'pg_sync-metadata.json';
+const CRON_ALERT_STATE_FILE = 'alert-state.json';
 
 interface SyncMetadata {
     lastSyncTimestamp: string | null;
@@ -180,6 +188,13 @@ export async function setPGSyncMetadata(metadata: SyncMetadata): Promise<void> {
     await storeRouteData(PG_SYNC_METADATA_FILE, metadata);
 }
 
+export async function readCronAlertState(): Promise<any> {
+    return readFileData(CRON_ALERT_STATE_FILE, { skipErrorLog: true });
+}
+
+export async function storeCronAlertState(data: any): Promise<void> {
+    await storeDataStrict(CRON_ALERT_STATE_FILE, data);
+}
 
 // Historical data per ID
 export async function storeHistoricalDataForId(id: string, data: any[]): Promise<void> {
@@ -190,6 +205,15 @@ export async function readHistoricalDataForId(id: string): Promise<any[] | null>
     const result = await readRouteData(`charts/${id}.json`, { skipErrorLog: true });
     if (Array.isArray(result)) return result;
     return result?.data || null;
+}
+
+// Pre-computed daily net-flow series per ID (served by /flows/:id)
+export async function storeFlowsForId(id: string, data: any[]): Promise<void> {
+    await storeRouteData(`flows/${id}.json`, data);
+}
+
+export async function readFlowsForId(id: string): Promise<any[] | null> {
+    return await readRouteData(`flows/${id}.json`, { skipErrorLog: true });
 }
 
 export function mergeHistoricalData(
@@ -218,16 +242,19 @@ export function mergeHistoricalData(
     return merged;
 }
 
-// PG Cache - stores asset data with chain breakdown (chain keys), keyed by timestamp
+// PG Cache - stores asset data with chain breakdown (chain keys), keyed by timestamp.
+// totalSupply: null = no data; 0 = supply is genuinely zero.
 export interface PGCacheRecord {
     onChainMcap: number;
     activeMcap: number;
     defiActiveTvl: number;
+    totalSupply: number | null;
     chains: {
         [chainKey: string]: {
             onChainMcap: number;
             activeMcap: number;
             defiActiveTvl: number;
+            totalSupply: number | null;
         };
     };
 }

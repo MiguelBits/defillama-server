@@ -1,10 +1,10 @@
 # Use an official Node.js runtime as a parent image
 FROM node:20
-# Install pnpm globally
+# Install pnpm and nginx
 RUN npm install -g pnpm
+RUN apt-get update && apt-get install -y nginx rsync sshpass && rm -rf /var/lib/apt/lists/*
 ARG CUSTOM_GIT_BRANCH_DEPLOYMENT
 ENV CUSTOM_GIT_BRANCH_DEPLOYMENT=${CUSTOM_GIT_BRANCH_DEPLOYMENT}
-
 
 # Set the working directory in the container to /app
 WORKDIR /app

@@ -4,6 +4,7 @@
  * Primary: Pyth Hermes
  *   fetchPythPricesByFeedId(ids)   — when the caller already has Pyth feed IDs (Avantis)
  *   fetchPythPricesBySymbol(syms)  — maps base symbols ("AAPL") → feed IDs via benchmarks API (gTrade)
+ *   fetchPythPricesBySymbolPair(pairs) — maps exact pairs ("USD/JPY") → feed IDs via benchmarks API (gTrade FX)
  *
  * Fallback: Ostium live price feed
  *   fetchOstiumFallbackPrices()    — fetches all available prices from Ostium
@@ -27,6 +28,22 @@ interface PythBenchmarkFeed {
 }
 
 let feedMapCache: Map<string, string[]> | null = null;
+let pairFeedMapCache: Map<string, string[]> | null = null;
+let benchmarkFeedsCache: PythBenchmarkFeed[] | null = null;
+
+async function getBenchmarkFeeds(): Promise<PythBenchmarkFeed[]> {
+  if (benchmarkFeedsCache) return benchmarkFeedsCache;
+
+  try {
+    const res = await fetch(PYTH_BENCHMARKS);
+    if (!res.ok) throw new Error(`Pyth benchmarks ${res.status}`);
+    benchmarkFeedsCache = await res.json();
+    return benchmarkFeedsCache;
+  } catch (e) {
+    console.error("Pyth getBenchmarkFeeds error:", e);
+    return [];
+  }
+}
 
 /**
  * Build a lowercase base symbol → feed ID mapping from the Pyth benchmarks API.
@@ -37,9 +54,7 @@ async function getFeedMap(): Promise<Map<string, string[]>> {
   if (feedMapCache) return feedMapCache;
 
   try {
-    const res = await fetch(PYTH_BENCHMARKS);
-    if (!res.ok) throw new Error(`Pyth benchmarks ${res.status}`);
-    const feeds: PythBenchmarkFeed[] = await res.json();
+    const feeds = await getBenchmarkFeeds();
 
     // Collect feeds by session type: regular, overnight (.ON), pre-market (.PRE), post-market (.POST)
     // Priority: regular > ON > PRE > POST (try each in order until a non-zero price is found)
@@ -90,6 +105,62 @@ async function getFeedMap(): Promise<Map<string, string[]>> {
     return map;
   } catch (e) {
     console.error("Pyth getFeedMap error:", e);
+    return new Map();
+  }
+}
+
+function normalizeSymbolPairKey(base: string, quote: string): string {
+  return `${base.trim().toUpperCase()}/${quote.trim().toUpperCase()}`;
+}
+
+async function getPairFeedMap(): Promise<Map<string, string[]>> {
+  if (pairFeedMapCache) return pairFeedMapCache;
+
+  try {
+    const feeds = await getBenchmarkFeeds();
+    const buckets: Record<string, Map<string, string>> = {
+      regular: new Map(),
+      on: new Map(),
+      pre: new Map(),
+      post: new Map(),
+    };
+
+    for (const f of feeds) {
+      const { base, quote_currency, symbol, asset_type } = f.attributes;
+      if (!base || !quote_currency) continue;
+      if (String(asset_type).toLowerCase() === "crypto") continue;
+
+      const key = normalizeSymbolPairKey(base, quote_currency);
+      const feedId = "0x" + f.id;
+
+      let bucket: string;
+      if (/\.ON$/.test(symbol)) bucket = "on";
+      else if (/\.PRE$/.test(symbol)) bucket = "pre";
+      else if (/\.POST$/.test(symbol)) bucket = "post";
+      else bucket = "regular";
+
+      const bmap = buckets[bucket];
+      if (!bmap.has(key)) bmap.set(key, feedId);
+    }
+
+    const map = new Map<string, string[]>();
+    const allKeys = new Set([
+      ...buckets.regular.keys(), ...buckets.on.keys(),
+      ...buckets.pre.keys(), ...buckets.post.keys(),
+    ]);
+    for (const key of allKeys) {
+      const ids: string[] = [];
+      for (const b of ["regular", "on", "pre", "post"]) {
+        const feedId = buckets[b].get(key);
+        if (feedId) ids.push(feedId);
+      }
+      map.set(key, ids);
+    }
+
+    pairFeedMapCache = map;
+    return map;
+  } catch (e) {
+    console.error("Pyth getPairFeedMap error:", e);
     return new Map();
   }
 }
@@ -159,6 +230,41 @@ export async function fetchPythPricesBySymbol(
       const price = pricesByFeedId.get(feedId);
       if (price !== undefined) {
         result.set(symbol, price);
+        break;
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Fetch latest prices for exact symbol pairs (e.g. "EUR/USD", "USD/JPY").
+ * This is needed for FX contracts where the base symbol alone is ambiguous.
+ * Returns a Map keyed by "BASE/QUOTE".
+ */
+export async function fetchPythPricesBySymbolPair(
+  pairs: Array<{ base: string; quote: string }>,
+): Promise<Map<string, number>> {
+  const feedMap = await getPairFeedMap();
+
+  const pairToFeedIds: Array<{ pairKey: string; feedIds: string[] }> = [];
+  for (const pair of pairs) {
+    const pairKey = normalizeSymbolPairKey(pair.base, pair.quote);
+    const feedIds = feedMap.get(pairKey);
+    if (feedIds && feedIds.length > 0) pairToFeedIds.push({ pairKey, feedIds });
+  }
+
+  if (pairToFeedIds.length === 0) return new Map();
+
+  const allFeedIds = pairToFeedIds.flatMap((p) => p.feedIds);
+  const pricesByFeedId = await fetchPythPricesByFeedId([...new Set(allFeedIds)]);
+
+  const result = new Map<string, number>();
+  for (const { pairKey, feedIds } of pairToFeedIds) {
+    for (const feedId of feedIds) {
+      const price = pricesByFeedId.get(feedId);
+      if (price !== undefined) {
+        result.set(pairKey, price);
         break;
       }
     }

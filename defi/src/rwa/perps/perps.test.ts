@@ -20,6 +20,7 @@ import {
   normalizePerpsMetadataInPlace,
   PERPS_ALWAYS_STRING_ARRAY_FIELDS,
   PERPS_STRING_OR_NULL_FIELDS,
+  resolveContractKey,
   resetContractMetadataStore,
   setContractMetadata,
   type PerpsContractMetadata,
@@ -45,6 +46,14 @@ import {
   type FundingHistoryEntry,
 } from "./platforms/adapters/hyperliquid";
 import { parseApexMarkets, type ApexContract, type ApexTicker, type ApexUiTicker } from "./platforms/adapters/apex";
+import { isGtradeRwaGroupName, toGtradePythPairKey } from "./platforms/adapters/gtrade";
+import {
+  parseVariationalMarkets,
+  VARIATIONAL_MAX_LEVERAGE,
+  VARIATIONAL_MAKER_FEE,
+  VARIATIONAL_TAKER_FEE,
+  type VariationalListing,
+} from "./platforms/adapters/variational";
 import { getCsvData } from "../spreadsheet";
 
 // ── utils.ts ──────────────────────────────────────────────────────────────────
@@ -113,6 +122,26 @@ describe("computeProtocolFees", () => {
   });
 });
 
+describe("gTrade adapter helpers", () => {
+  it("treats gTrade forex groups as RWA perps groups", () => {
+    expect(isGtradeRwaGroupName("stocks-1")).toBe(true);
+    expect(isGtradeRwaGroupName("indices")).toBe(true);
+    expect(isGtradeRwaGroupName("commodities-2")).toBe(true);
+    expect(isGtradeRwaGroupName("forex")).toBe(true);
+    expect(isGtradeRwaGroupName("forex-minor")).toBe(true);
+    expect(isGtradeRwaGroupName("forex-exotic")).toBe(true);
+    expect(isGtradeRwaGroupName("crypto")).toBe(false);
+    expect(isGtradeRwaGroupName("altcoins")).toBe(false);
+  });
+
+  it("builds exact Pyth pair keys from gTrade contracts", () => {
+    expect(toGtradePythPairKey("gtrade:USD-JPY")).toEqual({ base: "USD", quote: "JPY", key: "USD/JPY" });
+    expect(toGtradePythPairKey("gtrade:GOOGL_1-USD")).toEqual({ base: "GOOGL", quote: "USD", key: "GOOGL/USD" });
+    expect(toGtradePythPairKey("gtrade:FB-USD")).toEqual({ base: "META", quote: "USD", key: "META/USD" });
+    expect(toGtradePythPairKey("bad-contract")).toBeNull();
+  });
+});
+
 describe("groupBy", () => {
   it("groups items by key function", () => {
     const items = [
@@ -169,6 +198,28 @@ describe("market metadata store", () => {
   it("returns null for unknown contract", () => {
     expect(getContractMetadata("DOESNOTEXIST")).toBeNull();
     expect(hasContractMetadata("DOESNOTEXIST")).toBe(false);
+  });
+
+  it("resolves live gTrade pair IDs to Airtable canonical IDs", () => {
+    setContractMetadata("gtrade:USDMXN", meta);
+    setContractMetadata("gtrade:JPY", meta);
+    setContractMetadata("gtrade:AMZN-USD", meta);
+    setContractMetadata("gtrade:GOOGL", meta);
+
+    expect(resolveContractKey("gtrade:USD-MXN")).toBe("gtrade:usdmxn");
+    expect(resolveContractKey("gtrade:USD-JPY")).toBe("gtrade:jpy");
+    expect(resolveContractKey("gtrade:AMZN-USD")).toBe("gtrade:amzn-usd");
+    expect(resolveContractKey("gtrade:GOOGL-USD")).toBe("gtrade:googl");
+    expect(resolveContractKey("gtrade:AMZN_1-USD")).toBeUndefined();
+  });
+
+  it("does not resolve ambiguous generated aliases", () => {
+    setContractMetadata("cash:HOOD-USDT", meta);
+    setContractMetadata("cash:HOOD-USDC", meta);
+
+    expect(resolveContractKey("cash:HOOD")).toBeUndefined();
+    expect(resolveContractKey("cash:HOOD-USDT")).toBe("cash:hood-usdt");
+    expect(resolveContractKey("cash:HOOD-USDC")).toBe("cash:hood-usdc");
   });
 });
 
@@ -537,6 +588,60 @@ describe("parseApexMarkets", () => {
 
   it("skips enabled contracts when no matching ticker is present", () => {
     expect(parseApexMarkets([contracts[0]], [])).toEqual([]);
+  });
+});
+
+// ── variational.ts parsers ───────────────────────────────────────────────────
+
+describe("parseVariationalMarkets", () => {
+  const listings: VariationalListing[] = [
+    {
+      ticker: "XAU",
+      name: "Gold",
+      mark_price: "4497.97",
+      volume_24h: "23277904.91",
+      open_interest: {
+        long_open_interest: "3000000.5",
+        short_open_interest: "2693491.25",
+      },
+      funding_rate: "0.084694",
+      funding_interval_s: 14400,
+      base_spread_bps: "6.43",
+      quotes: {
+        base: { bid: "4497.50", ask: "4498.50" },
+      },
+    },
+    {
+      ticker: "BTC",
+      name: "Bitcoin",
+      mark_price: "77308.63",
+      volume_24h: "318320282.07",
+      open_interest: {
+        long_open_interest: "100",
+        short_open_interest: "200",
+      },
+    },
+  ];
+
+  it("keeps only Variational RWA tickers", () => {
+    const parsed = parseVariationalMarkets(listings);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].contract).toBe("variational:XAU");
+    expect(parsed[0].venue).toBe("variational");
+    expect(parsed[0].platform).toBe("variational");
+  });
+
+  it("maps notional market fields from the stats listing", () => {
+    const [xau] = parseVariationalMarkets(listings);
+    expect(xau.openInterest).toBe(11386983.5);
+    expect(xau.volume24h).toBe(23277904.91);
+    expect(xau.markPx).toBe(4497.97);
+    expect(xau.oraclePx).toBe(0);
+    expect(xau.midPx).toBe(4498);
+    expect(xau.fundingRate).toBeCloseTo(0.084694 / 2190);
+    expect(xau.maxLeverage).toBe(VARIATIONAL_MAX_LEVERAGE);
+    expect(xau.makerFeeRate).toBe(VARIATIONAL_MAKER_FEE);
+    expect(xau.takerFeeRate).toBe(VARIATIONAL_TAKER_FEE);
   });
 });
 

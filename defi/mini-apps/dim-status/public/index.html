@@ -61,6 +61,16 @@
     .run-tab:hover  { background: var(--surface3); color: var(--text); }
     .run-tab.active { background: var(--accent); color: #fff; }
 
+    /* ── Stablecoins window selector ── */
+    .sc-win-btn {
+      padding: 4px 10px; border-radius: 4px; border: 1px solid var(--border);
+      background: var(--surface2); color: var(--muted);
+      font-size: 11px; font-weight: 500; cursor: pointer;
+      transition: background .12s, color .12s, border-color .12s;
+    }
+    .sc-win-btn:hover  { background: var(--surface3); color: var(--text); }
+    .sc-win-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
     /* ── Scrollable content ── */
     #content, #tvl-content { flex: 1; overflow-y: auto; padding: 20px; }
     .loading   { color: var(--muted); text-align: center; padding: 60px 20px; font-size: 14px; }
@@ -255,6 +265,7 @@
   <button class="top-tab" data-top="dimensions">Dimensions</button>
   <button class="top-tab" data-top="checks">Checks</button>
   <button class="top-tab" data-top="tvl">TVL</button>
+  <button class="top-tab" data-top="stablecoins">Stablecoins</button>
   <button class="top-tab" data-top="missing">Missing Metrics</button>
 </nav>
 
@@ -272,6 +283,10 @@
 
 <div class="top-panel" id="panel-tvl">
   <main id="tvl-content"><div class="loading">Loading…</div></main>
+</div>
+
+<div class="top-panel" id="panel-stablecoins">
+  <main id="stablecoins-content"><div class="loading">Loading…</div></main>
 </div>
 
 <div class="top-panel" id="panel-missing">
@@ -1447,6 +1462,230 @@ async function loadMissingTab() {
   }
 }
 
+// ── Stablecoins tab ─────────────────────────────────────────────────────────
+let stablecoinsLoaded = false
+let stablecoinsData = null
+let stablecoinsWindow = '24h'
+
+async function loadStablecoinsTab() {
+  const content = document.getElementById('stablecoins-content')
+  content.innerHTML = '<div class="loading">Loading…</div>'
+
+  try {
+    stablecoinsData = await getJson('stablecoins-run-stats')
+    stablecoinsWindow = lsGet('sc-window', '24h')
+    if (!stablecoinsData.windows[stablecoinsWindow]) stablecoinsWindow = '24h'
+
+    content.innerHTML = `
+      <div style="padding:20px;overflow-y:auto;flex:1">
+        <div class="stats-header">
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="font-size:11px;color:var(--muted)">Window:</span>
+            <button class="sc-win-btn" data-w="1h">1h</button>
+            <button class="sc-win-btn" data-w="24h">24h</button>
+            <button class="sc-win-btn" data-w="7d">7d</button>
+          </div>
+          <div class="gen-time">
+            ${fmtDate(stablecoinsData.generationTime)}<span class="rel">${relTime(stablecoinsData.generationTime)}</span>
+          </div>
+        </div>
+        <div id="sc-stats-card"></div>
+
+        <div class="card" style="margin-top:20px">
+          <button class="collapse-toggle open" id="sc-failures-toggle">
+            <span class="collapse-arrow">▶</span>
+            Recent Failures
+            <span style="font-weight:400;color:var(--muted);font-size:11px;margin-left:6px" id="sc-failures-count"></span>
+          </button>
+          <div class="collapse-body open" id="sc-failures-body" style="padding:0 16px 16px">
+            <div class="filter-bar" id="sc-failures-filters">
+              <label>Search</label>
+              <input type="text" id="sc-fail-name" placeholder="Asset name…" style="width:180px">
+              <label>Asset ID</label>
+              <input type="text" id="sc-fail-id" placeholder="e.g. 1" style="width:80px">
+            </div>
+            <div id="tbl-sc-failures"></div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:20px">
+          <button class="collapse-toggle open" id="sc-assets-toggle">
+            <span class="collapse-arrow">▶</span>
+            All Assets Breakdown
+            <span style="font-weight:400;color:var(--muted);font-size:11px;margin-left:6px" id="sc-assets-count"></span>
+          </button>
+          <div class="collapse-body open" id="sc-assets-body" style="padding:0 16px 16px">
+            <div class="filter-bar" id="sc-assets-filters">
+              <label>Search</label>
+              <input type="text" id="sc-asset-name" placeholder="Asset name…" style="width:180px">
+              <label>Asset ID</label>
+              <input type="text" id="sc-asset-id" placeholder="e.g. 1" style="width:80px">
+            </div>
+            <div id="tbl-sc-assets"></div>
+          </div>
+        </div>
+      </div>
+    `
+
+    // Wire window selector buttons
+    document.querySelectorAll('.sc-win-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        stablecoinsWindow = btn.dataset.w
+        lsSet('sc-window', stablecoinsWindow)
+        renderStablecoinsContent()
+      })
+    })
+
+    // Wire collapse toggles
+    document.getElementById('sc-failures-toggle').addEventListener('click', () => {
+      document.getElementById('sc-failures-toggle').classList.toggle('open')
+      document.getElementById('sc-failures-body').classList.toggle('open')
+    })
+    document.getElementById('sc-assets-toggle').addEventListener('click', () => {
+      document.getElementById('sc-assets-toggle').classList.toggle('open')
+      document.getElementById('sc-assets-body').classList.toggle('open')
+    })
+
+    // Wire filter inputs (failures)
+    document.getElementById('sc-fail-name').addEventListener('input', renderFailuresTable)
+    document.getElementById('sc-fail-id').addEventListener('input', renderFailuresTable)
+    // Wire filter inputs (assets)
+    document.getElementById('sc-asset-name').addEventListener('input', renderAssetsTable)
+    document.getElementById('sc-asset-id').addEventListener('input', renderAssetsTable)
+
+    renderStablecoinsContent()
+    stablecoinsLoaded = true
+  } catch (err) {
+    content.innerHTML = '<div class="err-state">Error loading stablecoins stats: ' + esc(err.message) + '</div>'
+    console.error(err)
+  }
+}
+
+function renderStablecoinsContent() {
+  if (!stablecoinsData) return
+  const w = stablecoinsData.windows[stablecoinsWindow]
+
+  // Active window button
+  document.querySelectorAll('.sc-win-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.w === stablecoinsWindow)
+  })
+
+  // Stats chips
+  document.getElementById('sc-stats-card').innerHTML = `
+    <div class="card">
+      <div class="stats-row">
+        ${chips([
+          ['Total Assets',  fmtN(w.uniqueAssets), 'accent'],
+          ['OK Assets',     fmtN(w.okAssets),     'success'],
+          ['Failed Assets', fmtN(w.failedAssets), w.failedAssets > 0 ? 'danger' : 'success'],
+        ])}
+      </div>
+    </div>
+  `
+
+  document.getElementById('sc-failures-count').textContent = `(${w.recentErrors.length})`
+  document.getElementById('sc-assets-count').textContent = `(${w.byAsset.length})`
+
+  renderFailuresTable()
+  renderAssetsTable()
+}
+
+function renderFailuresTable() {
+  if (!stablecoinsData) return
+  const w = stablecoinsData.windows[stablecoinsWindow]
+  const nameFilter = (document.getElementById('sc-fail-name')?.value ?? '').toLowerCase()
+  const idFilter   = (document.getElementById('sc-fail-id')?.value ?? '').trim()
+  let filtered = w.recentErrors
+  if (nameFilter) filtered = filtered.filter(e => String(e.name ?? '').toLowerCase().includes(nameFilter))
+  if (idFilter)   filtered = filtered.filter(e => String(e.assetId ?? '').includes(idFilter))
+
+  const container = document.getElementById('tbl-sc-failures')
+
+  if (filtered.length === 0) {
+    container.innerHTML = '<div style="padding:24px;color:var(--muted);text-align:center">No failures</div>'
+    return
+  }
+
+  // Group by adapter (assetId + name)
+  const groups = new Map()
+  for (const e of filtered) {
+    const key = `${e.assetId ?? '?'}|${e.name ?? '?'}`
+    if (!groups.has(key)) groups.set(key, { assetId: e.assetId, name: e.name, builds: [] })
+    groups.get(key).builds.push(e)
+  }
+  const sorted = [...groups.values()].sort((a, b) => b.builds.length - a.builds.length)
+
+  container.innerHTML = sorted.map((group, idx) => {
+    // Sort builds within a group by timestamp desc (most recent first)
+    const builds = [...group.builds].sort((a, b) => {
+      const tb = b.timestamp ? new Date(b.timestamp).getTime() : 0
+      const ta = a.timestamp ? new Date(a.timestamp).getTime() : 0
+      return tb - ta
+    })
+    const buildsHtml = builds.map(e => `
+      <div style="padding:8px 16px 8px 36px;border-top:1px solid var(--border);font-size:12px">
+        <div style="display:flex;gap:16px;margin-bottom:4px">
+          <span style="color:var(--muted);min-width:90px">${esc(e.timestamp ? relTime(e.timestamp) : '—')}</span>
+          <span style="color:var(--muted);font-size:11px">${esc(e.timestamp ? fmtDate(e.timestamp) : '')}</span>
+        </div>
+        <div style="font-family:monospace;color:var(--red);padding-left:0;white-space:pre-wrap;word-break:break-word">${esc(String(e.errorString ?? '(no error message)'))}</div>
+      </div>
+    `).join('')
+    return `
+      <div class="card" style="margin-bottom:6px">
+        <button class="collapse-toggle" data-grp="${idx}" style="text-align:left">
+          <span class="collapse-arrow">▶</span>
+          <span style="font-weight:600;margin-right:6px">${esc(String(group.name ?? '?'))}</span>
+          <span style="color:var(--muted);font-size:11px;margin-right:8px">(id=${esc(String(group.assetId ?? '?'))})</span>
+          <span style="color:var(--red);font-weight:600">${builds.length} failed ${builds.length === 1 ? 'build' : 'builds'}</span>
+        </button>
+        <div class="collapse-body" data-grp-body="${idx}">
+          ${buildsHtml}
+        </div>
+      </div>
+    `
+  }).join('')
+
+  // Wire collapse toggles
+  container.querySelectorAll('.collapse-toggle[data-grp]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = btn.dataset.grp
+      btn.classList.toggle('open')
+      container.querySelector(`[data-grp-body="${idx}"]`)?.classList.toggle('open')
+    })
+  })
+}
+
+function renderAssetsTable() {
+  if (!stablecoinsData) return
+  const w = stablecoinsData.windows[stablecoinsWindow]
+  const nameFilter = (document.getElementById('sc-asset-name')?.value ?? '').toLowerCase()
+  const idFilter   = (document.getElementById('sc-asset-id')?.value ?? '').trim()
+  let filtered = w.byAsset
+  if (nameFilter) filtered = filtered.filter(a => String(a.name ?? '').toLowerCase().includes(nameFilter))
+  if (idFilter)   filtered = filtered.filter(a => String(a.assetId ?? '').includes(idFilter))
+
+  renderTable('tbl-sc-assets', filtered, [
+    { key: 'status', label: 'Status', render: r => {
+      if (r.fail > 0 && r.ok === 0) return '<span style="color:var(--red);font-weight:600">✗ Failing</span>'
+      if (r.fail > 0 && r.ok > 0)   return '<span style="color:var(--yellow);font-weight:600">⚠ Mixed</span>'
+      if (r.ok > 0)                 return '<span style="color:var(--green)">✓ Healthy</span>'
+      return '<span style="color:var(--muted)">—</span>'
+    }, sortVal: r => {
+      if (r.fail > 0 && r.ok === 0) return 0    // Failing first
+      if (r.fail > 0 && r.ok > 0)   return 1    // Mixed
+      if (r.ok > 0)                 return 2    // Healthy
+      return 3                                  // No data
+    }},
+    { key: 'assetId',    label: 'ID',              render: r => esc(String(r.assetId)), sortVal: r => Number(r.assetId) || 0 },
+    { key: 'name',       label: 'Name',            render: r => esc(String(r.name ?? '')) },
+    { key: 'ok',         label: 'Successful runs', render: r => r.ok > 0 ? `<span style="color:var(--green)">${fmtN(r.ok)}</span>` : '0', sortVal: r => r.ok },
+    { key: 'fail',       label: 'Failed runs',     render: r => r.fail > 0 ? `<span style="color:var(--red)">${fmtN(r.fail)}</span>` : '0', sortVal: r => r.fail },
+    { key: 'avgRuntime', label: 'Avg runtime',     render: r => r.avgRuntime != null ? `${r.avgRuntime.toFixed(1)}s` : '—', sortVal: r => r.avgRuntime ?? 0 },
+    { key: 'lastRun',    label: 'Last run',        render: r => r.lastRun ? relTime(r.lastRun) : '—', sortVal: r => r.lastRun ? new Date(r.lastRun).getTime() : 0 },
+  ], 'status', 1)
+}
+
 // ── Top-level tab switching ─────────────────────────────────────────────────
 function switchTopTab(tab) {
   const bar = document.getElementById('top-tab-bar');
@@ -1462,6 +1701,7 @@ function switchTopTab(tab) {
   if (tab === 'checks' && !checksLoaded) loadChecksTab();
   if (tab === 'dimensions' && !summaryLoaded) loadDimSummary();
   if (tab === 'missing' && !missingLoaded) loadMissingTab();
+  if (tab === 'stablecoins' && !stablecoinsLoaded) loadStablecoinsTab();
 }
 
 function initTopTabs() {
@@ -1495,7 +1735,7 @@ function init() {
 
   // Restore top tab from localStorage
   const savedTopTab = lsGet(LS_KEYS.topTab, 'dimensions');
-  switchTopTab(['dimensions', 'checks', 'tvl', 'missing'].includes(savedTopTab) ? savedTopTab : 'dimensions');
+  switchTopTab(['dimensions', 'checks', 'tvl', 'stablecoins', 'missing'].includes(savedTopTab) ? savedTopTab : 'dimensions');
 }
 
 init();

@@ -8,9 +8,11 @@ import {
   expectNonEmptyArray,
   expectValidNumber,
   expectValidTimestamp,
+  expectFreshData,
 } from '../../utils/testHelpers';
 import { validate } from '../../utils/validation';
 import { ApiResponse } from '../../utils/config/apiClient';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.FEES_V2.BASE_URL);
 const FEES_V2_ENDPOINTS = endpoints.FEES_V2;
@@ -25,6 +27,10 @@ describe('Fees V2 API - Chart Chain Breakdown', () => {
   }, 60000);
 
   describe('Basic Response Validation', () => {
+    it('should expose CORS headers', () => {
+      expectCorsHeaders(response);
+    });
+
     it('should return successful response', () => {
       expectSuccessfulResponse(response);
     });
@@ -63,6 +69,11 @@ describe('Fees V2 API - Chart Chain Breakdown', () => {
       for (let i = 1; i < data.length; i++) {
         expect(data[i][0]).toBeGreaterThanOrEqual(data[i - 1][0]);
       }
+    });
+
+    it('should have a fresh latest datapoint (within 2 days)', () => {
+      if (response.data.length === 0) return;
+      expectFreshData(response.data.map(([ts]) => ts), 86400 * 2);
     });
   });
 

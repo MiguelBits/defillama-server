@@ -8,6 +8,7 @@ import {
 } from '../../utils/testHelpers';
 import { validate } from '../../utils/validation';
 import { ApiResponse } from '../../utils/config/apiClient';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.COINS.BASE_URL);
 
@@ -41,6 +42,10 @@ describe('Coins API - Percentage Change', () => {
       }, 30000);
 
       describe('Basic Response Validation', () => {
+        it('should expose CORS headers', () => {
+          expectCorsHeaders(response);
+        });
+
         it('should return successful response with valid structure', () => {
           expectSuccessfulResponse(response);
           expect(response.data).toHaveProperty('coins');

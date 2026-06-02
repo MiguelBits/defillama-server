@@ -221,6 +221,70 @@ describe("filterWritesWithLowConfidence", () => {
     expect(result.map((w) => w.PK).sort()).toEqual([cgPK, tempoPK].sort());
     expect(result.find((w) => w.PK === cgPK)?.price).toBe(0.99);
   });
+
+  it("drops a secondary-adapter write when a different secondary adapter holds the fresh CG slot", async () => {
+    const assetPK = "asset#ethereum:0xweth";
+    const cgPK = "coingecko#weth";
+    mockedBatchGet
+      .mockResolvedValueOnce([read(assetPK, { redirect: cgPK })])
+      .mockResolvedValueOnce([
+        read(cgPK, {
+          adapter: "weth-adapter-A",
+          timestamp: now(),
+          price: 2000,
+        }),
+      ]);
+
+    const result = await filterWritesWithLowConfidence([
+      write(assetPK, { adapter: "weth-adapter-B", price: 2010, confidence: 0.9 }),
+    ]);
+
+    expect(result).toEqual([]);
+  });
+
+  it("rewrites a secondary-adapter write onto its own fresh CG slot (self-update)", async () => {
+    const assetPK = "asset#ethereum:0xweth";
+    const cgPK = "coingecko#weth";
+    mockedBatchGet
+      .mockResolvedValueOnce([read(assetPK, { redirect: cgPK })])
+      .mockResolvedValueOnce([
+        read(cgPK, {
+          adapter: "weth-adapter-A",
+          timestamp: now(),
+          price: 2000,
+        }),
+      ]);
+
+    const result = await filterWritesWithLowConfidence([
+      write(assetPK, { adapter: "weth-adapter-A", price: 2010, confidence: 0.9 }),
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].PK).toBe(cgPK);
+    expect(result[0].price).toBe(2010);
+  });
+
+  it("lets any secondary adapter take a stale CG slot held by a different secondary adapter", async () => {
+    const assetPK = "asset#ethereum:0xweth";
+    const cgPK = "coingecko#weth";
+    mockedBatchGet
+      .mockResolvedValueOnce([read(assetPK, { redirect: cgPK })])
+      .mockResolvedValueOnce([
+        read(cgPK, {
+          adapter: "weth-adapter-A",
+          timestamp: now() - staleMargin - 1,
+          price: 2000,
+        }),
+      ]);
+
+    const result = await filterWritesWithLowConfidence([
+      write(assetPK, { adapter: "weth-adapter-B", price: 2010, confidence: 0.9 }),
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].PK).toBe(cgPK);
+    expect(result[0].price).toBe(2010);
+  });
 });
 
 describe("batchWriteWithAlerts", () => {

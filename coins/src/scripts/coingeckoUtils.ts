@@ -256,7 +256,8 @@ export async function getSymbolAndDecimals(
       if (originalAddress?.includes('-')) {
         return {
           symbol: originalAddress.split('-')[0],
-          decimals: 0, // Stellar tokens have 7 decimals by default}
+          // Classic Stellar assets use 7 decimal places.
+          decimals: 7,
         }
       } else { return; }
 

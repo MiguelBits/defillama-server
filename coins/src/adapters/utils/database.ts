@@ -390,11 +390,15 @@ export async function filterWritesWithLowConfidence(
     }
   });
 
-  // For asset writes with a stale coingecko redirect, rewrite PK to coingecko#<id>
-  // so all chain deployments get repriced from this secondary source
+  // For asset writes with a coingecko redirect, rewrite PK to coingecko#<id>
+  // when the override gate is open. Per-write gate: open iff the CG entry has
+  // gone stale, OR the same adapter currently holds the slot (self-update).
+  // Stops a chain of secondary adapters from rolling the slot around: once
+  // adapter X owns the slot, only X can update it until it goes stale.
   const redirectMap: Record<string, string> = {}; // asset PK -> coingecko PK
   const missingCgPKs = new Set<string>();
-  let staleCgEntries: Record<string, any> = {}; // cgPK -> stale/non-CG entry
+  const cgEntriesByPK: Record<string, any> = {}; // cgPK -> existing SK=0 entry
+  const nowTs = getCurrentUnixTimestamp();
 
   const assetWrites = filteredWrites.filter(
     (w) => w?.PK?.startsWith("asset#") && w.confidence >= staleCgConfidenceThreshold,
@@ -407,13 +411,11 @@ export async function filterWritesWithLowConfidence(
       }
     }
 
-    // Check staleness of the coingecko entries
     const uniqueCgPKs = [...new Set(Object.values(redirectMap))];
     if (uniqueCgPKs.length > 0) {
       const cgEntries = await batchGet(
         uniqueCgPKs.map((pk) => ({ PK: pk, SK: 0 })),
       );
-      const now = getCurrentUnixTimestamp();
       const returnedPKs = new Set(cgEntries.map((e: any) => e?.PK).filter(Boolean));
       for (const pk of uniqueCgPKs) {
         if (!returnedPKs.has(pk)) {
@@ -423,10 +425,7 @@ export async function filterWritesWithLowConfidence(
       }
       for (const entry of cgEntries) {
         if (!entry) continue;
-        const isCgAdapter = entry.adapter === "coingecko";
-        const isStale = (now - (entry.timestamp ?? 0)) >= staleMargin;
-        // Override when: CG feed is stale, OR a secondary source already took over
-        if (!isCgAdapter || isStale) staleCgEntries[entry.PK] = entry;
+        cgEntriesByPK[entry.PK] = entry;
       }
 
       // Pick one winning asset PK per cgPK so multiple chain deployments don't
@@ -436,26 +435,28 @@ export async function filterWritesWithLowConfidence(
       for (const w of filteredWrites) {
         if (!w?.PK?.startsWith("asset#")) continue;
         const cgPK = redirectMap[w.PK];
-        if (!cgPK || !staleCgEntries[cgPK]) continue;
+        if (!cgPK) continue;
+        if (missingCgPKs.has(cgPK)) continue;
+        const cgEntry = cgEntriesByPK[cgPK];
+        if (!canOverrideCgSlot(cgEntry, w, nowTs)) continue;
         if (w.confidence < staleCgConfidenceThreshold) continue;
 
-        const cgEntry = staleCgEntries[cgPK];
         if (w.price == null || !Number.isFinite(w.price) || w.price <= 0) {
           sdk.log(
-            `filterWrites: skipping stale CG override for ${w.PK} -> ${cgPK}: invalid write price ${w.price}`,
+            `filterWrites: skipping CG override for ${w.PK} -> ${cgPK}: invalid write price ${w.price}`,
           );
           continue;
         }
         if (cgEntry.price != null) {
           if (!Number.isFinite(cgEntry.price) || cgEntry.price <= 0) {
             sdk.log(
-              `filterWrites: skipping stale CG override for ${w.PK} -> ${cgPK}: invalid CG price ${cgEntry.price}`,
+              `filterWrites: skipping CG override for ${w.PK} -> ${cgPK}: invalid CG price ${cgEntry.price}`,
             );
             continue;
           }
           const priceChange = Math.abs(w.price - cgEntry.price) / cgEntry.price;
           if (priceChange > staleCgPriceChangeThreshold) {
-            sdk.log(`filterWrites: skipping stale CG override for ${w.PK} -> ${cgPK}: price change ${(priceChange * 100).toFixed(1)}% exceeds ${staleCgPriceChangeThreshold * 100}%`);
+            sdk.log(`filterWrites: skipping CG override for ${w.PK} -> ${cgPK}: price change ${(priceChange * 100).toFixed(1)}% exceeds ${staleCgPriceChangeThreshold * 100}%`);
             continue;
           }
         }
@@ -469,7 +470,7 @@ export async function filterWritesWithLowConfidence(
         if (!w?.PK?.startsWith("asset#")) continue;
         const cgPK = redirectMap[w.PK];
         if (!cgPK || winnerByCgPK[cgPK]?.PK !== w.PK) continue;
-        sdk.log(`filterWrites: ${w.PK} -> ${cgPK} (stale CG, confidence ${w.confidence}, $${w.price?.toFixed(4)})`);
+        sdk.log(`filterWrites: ${w.PK} -> ${cgPK} (override, confidence ${w.confidence}, $${w.price?.toFixed(4)})`);
         w.PK = cgPK;
       }
     }
@@ -488,17 +489,33 @@ export async function filterWritesWithLowConfidence(
     .sort((a, b) => a.index - b.index)
     .map(({ write }) => write);
 
-  // Remove asset writes whose CG redirect is fresh (not stale) — the CG feed
-  // is already providing up-to-date prices so the lower-confidence adapter write is redundant
+  // Drop asset writes whose CG slot is held fresh by a different adapter — the
+  // current holder owns the slot until it goes stale, preventing secondary
+  // adapters from cascading-clobbering each other.
   return writesAfterRewriteDedupe.filter((f: Write) => {
     if (!f) return false;
     if (!f.PK?.startsWith("asset#")) return true;
     const cgPK = redirectMap[f.PK];
     if (!cgPK) return true; // no CG redirect, keep it
-    if (missingCgPKs.has(cgPK)) return true; // no CG entry to compare against, keep the asset write
-    if (staleCgEntries[cgPK]) return true; // CG is stale/non-CG, keep the asset write or rewritten winner
-    return false; // CG is fresh, drop the redundant asset write
+    if (missingCgPKs.has(cgPK)) return true; // no CG entry, keep the asset write
+    return canOverrideCgSlot(cgEntriesByPK[cgPK], f, nowTs);
   });
+}
+
+// Adapters that refresh the slot via their own direct write path (batchWrite,
+// not this filter). They don't claim same-adapter exclusivity: a fresh slot
+// held by one of these is treated the same as a slot held by coingecko itself,
+// or one with no adapter field at all — no secondary adapter can override it
+// unless the slot has gone stale.
+const cgLikeAdapters = new Set(["coingecko", "updateCoin"]);
+
+function canOverrideCgSlot(cgEntry: any, w: Write, nowTs: number): boolean {
+  if (!cgEntry) return true; // slot is empty, anyone can take it
+  const isStale = (nowTs - (cgEntry.timestamp ?? 0)) >= staleMargin;
+  if (isStale) return true;
+  if (cgEntry.adapter == null || cgLikeAdapters.has(cgEntry.adapter)) return false;
+  // A specific secondary adapter holds the slot — only that adapter can self-update.
+  return cgEntry.adapter === w.adapter;
 }
 function aggregateTokenAndRedirectData(reads: Read[]) {
   const coinData: CoinData[] = reads

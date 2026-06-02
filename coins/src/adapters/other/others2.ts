@@ -256,6 +256,21 @@ async function wUSCC(timestamp: number = 0) {
   return getWrites({ chain, timestamp, pricesObject, projectName: "other2", });
 };
 
+async function wFalconX(timestamp: number = 0) {
+  const chain = "ethereum";
+
+  const api = await getApi(chain, timestamp);
+  const token = "0x4614F7A56A3Eb83b2Ff9fA4B4b9575B28Fb68644";
+  const underlying = "0xC26A6Fa2C37b38E549a4a1807543801Db684f99C";
+  const balance = await api.call({ abi: 'erc20:balanceOf', target: underlying, params: token })
+  const supply = await api.call({ abi: 'erc20:totalSupply', target: token })
+  const price = balance / supply
+  const pricesObject: any = {
+    [token]: { price, underlying }
+  }
+  return getWrites({ chain, timestamp, pricesObject, projectName: "other2", });
+};
+
 async function prism(timestamp: number = 0) {
   const chain = "ethereum";
 
@@ -275,7 +290,7 @@ async function prism(timestamp: number = 0) {
 export const adapters = {
   solanaAVS,
   wstBFC, stOAS, wSTBT, beraborrow, feUBTC, cabal, cana, pikeSPA,
-  fusdlp, wJAAA, wUSCC, prism, valantisStexAMMs,
+  fusdlp, wJAAA, wUSCC, wFalconX, prism, valantisStexAMMs,
 
   springSUI: async (timestamp: number = 0) => {
     if (timestamp > 0 && Date.now() / 1000 - timestamp > 86400) {

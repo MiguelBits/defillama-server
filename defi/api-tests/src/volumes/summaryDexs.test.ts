@@ -10,6 +10,7 @@ import {
 } from '../../utils/testHelpers';
 import { validate } from '../../utils/validation';
 import { ApiResponse } from '../../utils/config/apiClient';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.VOLUMES.BASE_URL);
 
@@ -30,6 +31,10 @@ describe('Volumes API - Summary DEXs', () => {
       responses[protocol] = results[index];
     });
   }, 30000);
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(responses[testProtocols[0]]);
+  });
 
   describe.each(testProtocols)('Protocol: %s', (protocol) => {
     describe('Basic Response Validation', () => {

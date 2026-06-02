@@ -8,12 +8,25 @@ export type Result4626 = {
   decimals: number;
   symbol: string;
 };
+
+// Vaults that must NOT be priced via the generic totalAssets/totalSupply path,
+// keyed by `chain:address` (lowercase). totalAssets() on these reports assets
+// backing every chain deployment (not just this one), so the standard 4626 rate
+// is inflated. They are priced explicitly elsewhere (e.g. via convertToAssets in
+// adapters/yield/derivs.ts) — skipping them here lets that source win.
+const ERC4626_BLACKLIST = new Set<string>([
+  "arbitrum:0x0b2b2b2076d95dda7817e785989fe353fe955ef9", // sUSDai (Staked USDai)
+]);
+
 export async function calculate4626Prices(
   chain: any,
   timestamp: number,
-  tokens: string[],
+  tokensRaw: string[],
   projectName: string,
 ): Promise<Write[]> {
+  const tokens = tokensRaw.filter(
+    (t) => !ERC4626_BLACKLIST.has(`${chain}:${t.toLowerCase()}`),
+  );
   const api = await getApi(chain, timestamp)
   const uTokens = await api.multiCall({ abi: 'address:asset', calls: tokens, permitFailure: true } as any)
   const supply = await api.multiCall({ abi: 'uint256:totalSupply', calls: tokens, permitFailure: true } as any)

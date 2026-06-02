@@ -11,6 +11,7 @@ import {
 } from '../../utils/testHelpers';
 import { validate } from '../../utils/validation';
 import { ApiResponse } from '../../utils/config/apiClient';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.FEES_V2.BASE_URL);
 const FEES_V2_ENDPOINTS = endpoints.FEES_V2;
@@ -28,6 +29,10 @@ describe('Fees V2 API - Metrics Protocol Overview', () => {
       })
     );
   }, 60000);
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(responses[testProtocols[0]]);
+  });
 
   describe('Basic Response Validation', () => {
     testProtocols.forEach((protocolSlug) => {

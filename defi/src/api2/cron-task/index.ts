@@ -19,6 +19,7 @@ import { fetchRWAStats } from "../../rwa";
 import { sendMessage } from "../../utils/discord";
 import { extraSections, chainKeyToLabelMap } from "../../utils/normalizeChain";
 import { dailyTvl, hourlyTvl, hourlyUsdTokensTvl } from "../../utils/getLastRecord";
+import { processQueuedProtocolCacheResets } from "../../cli/utils/clearProtocolCache";
 
 const protocolDataMap: { [key: string]: any } = {}
 
@@ -48,6 +49,12 @@ async function storeCachedR2Files() {
 
 
 async function run() {
+  // there is a queue protocol ids in R2 cache which need to be reset cache
+  // get them, delete local files from pg-cache, reset R2 queue
+  if (process.env.TVL_CACHE_RESET_R2_FLAG && process.env.TVL_CACHE_RESET_R2_FLAG === 'true') {
+    await processQueuedProtocolCacheResets()
+  }
+
   await storeCachedR2Files()
 
   await initializeTVLCacheDB()

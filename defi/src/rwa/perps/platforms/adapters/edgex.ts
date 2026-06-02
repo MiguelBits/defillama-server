@@ -12,6 +12,8 @@ export const EDGEX_MAKER_FEE = 0.00018;
 export const EDGEX_TAKER_FEE = 0.00038;
 
 const EDGEX_API = "https://pro.edgex.exchange/api/v1/public";
+const EDGEX_MARKET_FETCH_CONCURRENCY = 2;
+const EDGEX_REQUEST_DELAY_MS = 250;
 
 // Commodity contracts that ARE RWAs but are flagged isStock=false on edgeX.
 // Source: PDF API instructions — section 2 (edgeX) "Filtering for RWAs only".
@@ -123,6 +125,10 @@ async function fetchEdgeXLatestFundingRate(
   return data?.data?.[0] ?? null;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function isRwaContract(c: EdgeXContract): boolean {
   if (!c.enableDisplay || !c.enableTrade) return false;
   // Internal placeholder contracts are named like "TEMP*" — ignore them.
@@ -193,13 +199,15 @@ export const edgexAdapter: PlatformAdapter = {
     CONTRACT_ID_BY_CONTRACT.clear();
     await runInPromisePool({
       items: rwaContracts,
-      concurrency: 8,
+      concurrency: EDGEX_MARKET_FETCH_CONCURRENCY,
       processor: async (c: EdgeXContract) => {
-        const [ticker, funding] = await Promise.all([
-          fetchEdgeXTicker(c.contractId),
-          fetchEdgeXLatestFundingRate(c.contractId),
-        ]);
+        const ticker = await fetchEdgeXTicker(c.contractId);
+        await sleep(EDGEX_REQUEST_DELAY_MS);
         if (!ticker) return;
+
+        const funding = await fetchEdgeXLatestFundingRate(c.contractId);
+        await sleep(EDGEX_REQUEST_DELAY_MS);
+
         const market = parseEdgeXMarket(c, ticker, funding);
         CONTRACT_ID_BY_CONTRACT.set(market.contract, c.contractId);
         markets.push(market);

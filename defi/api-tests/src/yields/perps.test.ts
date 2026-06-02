@@ -8,6 +8,7 @@ import {
 } from '../../utils/testHelpers';
 import { validate } from '../../utils/validation';
 import { ApiResponse } from '../../utils/config/apiClient';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.YIELDS_PRO.BASE_URL);
 
@@ -19,6 +20,10 @@ describe('Yields Pro API - Perps', () => {
   }, 30000);
 
   describe('Basic Response Validation', () => {
+    it('should expose CORS headers', () => {
+      expectCorsHeaders(perpsResponse);
+    });
+
     it('should return successful response with valid structure', () => {
       expectSuccessfulResponse(perpsResponse);
       expect(perpsResponse.data).toHaveProperty('status');

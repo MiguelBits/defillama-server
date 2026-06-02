@@ -1,11 +1,16 @@
+import * as sdk from "@defillama/sdk";
 import { lowercaseAddress } from "../../utils/processCoin";
 import { fetch } from "../utils";
 import { Token } from "./index";
 
 export default async function bridge() {
-  const bridge = (
-    await fetch("https://starknet.api.avnu.fi/v1/starknet/tokens")
-  ).content as any[];
+  const res = await fetch("https://starknet.api.avnu.fi/v1/starknet/tokens");
+  const bridge = (res?.content ?? []) as any[];
+
+  if (!bridge.length) {
+    sdk.log("avnu bridge: no token content (upstream may be down), skipping");
+    return [];
+  }
 
   const tokens: Token[] = [];
 

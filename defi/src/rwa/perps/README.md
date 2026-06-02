@@ -39,6 +39,8 @@ Currently supports the adapters listed in `platforms/index.ts`. New platforms ca
 
 The Apex adapter uses Apex Omni's public `symbols` and `all-open-tickers` endpoints for market config, fees, OI, volume, and funding, plus the same public `data/all-ticker-mixture` feed used by Apex's trade UI for mark price and 24h change.
 
+The Variational adapter uses Variational Omni's public `metadata/stats` endpoint for market prices, OI, volume, quotes, and funding. Because that endpoint does not expose asset classes, the adapter keeps a conservative RWA ticker allowlist.
+
 ## API endpoints
 
 All routes are prefixed with `/{RWA_PERPS_SUBPATH}/`.

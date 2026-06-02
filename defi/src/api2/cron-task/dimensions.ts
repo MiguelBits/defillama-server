@@ -248,7 +248,7 @@ ${tableToString(invalidFinancialStatementRecords, ['protocol', 'timeframe', 'key
     }
 
     adapterData.summaries = summaries
-    adapterData.allChains = Object.keys(chainMappingToVal).sort((a, b) => chainMappingToVal[b] - chainMappingToVal[a])
+    adapterData.allChains = Object.keys(chainMappingToVal).filter((chain) => chain !== "Off Chain").sort((a, b) => chainMappingToVal[b] - chainMappingToVal[a])
     adapterData.lastUpdated = getUnixTimeNow()
     // console.timeEnd(timeKey3)
 

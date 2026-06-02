@@ -117,7 +117,8 @@ function parseOstiumMarkets(
     // e.g., XAU longOI = 3.5e21 means 3,517 oz of gold. Multiply by price for USD.
     const longOI = safeFloat(pair.longOI) / 1e18;
     const shortOI = safeFloat(pair.shortOI) / 1e18;
-    const openInterest = (longOI + shortOI) * price;
+    // Ostium standardises OI as 2× the dominant side (per protocol team).
+    const openInterest = Math.max(longOI, shortOI) * 2 * price;
 
     // Volume: pair.id from subgraph is the pair index
     const volume24h = volumes.get(pair.id) ?? 0;

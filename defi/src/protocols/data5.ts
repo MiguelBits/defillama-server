@@ -52,7 +52,7 @@ const data5: Protocol[] = [
     audits: "0",
     gecko_id: null,
     cmcId: null,
-    category: "Derivatives",
+    category: "Interest Rate Derivatives",
     chains: ["Ethereum"],
     module: "rho-x/index.js",
     twitter: "Rho_Labs",
@@ -210,6 +210,9 @@ const data5: Protocol[] = [
       "https://github.com/SHIFT-NebulaLabs/shift-contracts/blob/main/audits/shift-sbsecurity-audit-2025.pdf",
     ],
     listedAt: 1761171899,
+    dimensions: {
+      fees: "shift-protocol",
+    },
   },
   {
     id: "6902",
@@ -675,6 +678,7 @@ const data5: Protocol[] = [
     twitter: "tryfomo",
     dimensions: {
       fees: "fomo",
+      dexs: "fomo",
     },
   },
   {
@@ -788,7 +792,7 @@ const data5: Protocol[] = [
     audits: "2",
     gecko_id: "juris-protocol",
     cmcId: null,
-    category: "Yield",
+    category: "Lending",
     chains: ["Terra"],
     module: "jurisprotocol/index.js",
     audit_links: ["https://app.solidproof.io/projects/juris-protocol?audit=963e1452-fcff-4a08-9618-72cf949c9419"],
@@ -1677,8 +1681,8 @@ const data5: Protocol[] = [
     name: "TurboFlow",
     address: null,
     symbol: "-",
-    url: "https://www.turboflow.xyz/trade/",
-    description: "The most retail-friendly PerpDEX, where retail trades like pros.",
+    url: "https://www.turboflow.xyz/",
+    description: "TurboFlow is an on-chain trading ecosystem focusing on the convergence of Perpetual Contracts and Prediction Markets. Everyone gets a seat at TurboFlow.",
     chain: "Binance",
     logo: `${baseIconsUrl}/turboflow.jpg`,
     audits: "0",
@@ -1689,7 +1693,8 @@ const data5: Protocol[] = [
     module: "turboflow/index.js",
     twitter: "TurboFlow_xyz",
     listedAt: 1762370757,
-    deprecated: true
+    audit_links: ["https://beosin.com/audits/Turboflow_202510271213.pdf"],
+    deprecated: false
   },
   {
     id: "6967",
@@ -1721,6 +1726,7 @@ const data5: Protocol[] = [
     dimensions: {
        fees: "dipcoin-perps",
        derivatives: "dipcoin-perps",
+       "open-interest": "dipcoin-perps-oi"
     },
   },
   {
@@ -2422,6 +2428,14 @@ const data5: Protocol[] = [
     ],
     stablecoins: ["yuzu-usd"],
     listedAt: 1763085858,
+    dimensions: {
+      fees: {
+        adapter: "yuzu-money",
+        genuineSpikes: [
+          ['2026-04-24', 'NAV dropped in junior vault due to the rsEth exploit'], //https://x.com/YuzuMoneyX/status/2047530119380836847 
+        ]
+      },
+    },
   },
   {
     id: "6998",
@@ -2791,6 +2805,9 @@ const data5: Protocol[] = [
     github: ["piku-co"],
     stablecoins: ["usp"],
     listedAt: 1763513599,
+    dimensions: {
+      fees: "piku",
+    },
   },
   {
     id: "7013",
@@ -2914,7 +2931,13 @@ const data5: Protocol[] = [
     dimensions: {
       derivatives: "antarctic",
       fees: "antarctic",
-      "open-interest": "antarctic",
+      "open-interest": {
+        adapter: "antarctic-oi",
+        genuineSpikes: [
+          ['2026-05-25', '-'], //listing day
+        ]
+      },
+      "normalized-volume": "antarctic",
     },
   },
   {
@@ -3417,7 +3440,7 @@ const data5: Protocol[] = [
     chains: ["Ethereum"],
     module: "cypher-v4/index.js",
     twitter: "cypher_ethereum",
-    forkedFromIds: ["2198"],
+    forkedFromIds: ["3710"],
     listedAt: 1764006177,
     parentProtocol: "parent#cypher",
     dimensions: {
@@ -3678,6 +3701,7 @@ const data5: Protocol[] = [
     parentProtocol: "parent#gate-products",
     dimensions: {
       derivatives: "gate-perps",
+      "open-interest": "gate-perps-oi",
       // fees: "gate-perps",
     },
   },
@@ -7130,25 +7154,27 @@ const data5: Protocol[] = [
   },
   {
     id: "7209",
-    name: "NEST V1",
+    name: "nest CLMM",
     address: "hyperliquid:0x07c57E32a3C29D5659bda1d3EFC2E7BF004E3035",
     symbol: "NEST",
     url: "https://app.usenest.xyz/",
     description: "NEST is built for Hyperliquid. Smart pools and efficient swaps power onchain rewards that compound value back to voters and the ecosystem.",
     chain: "Hyperliquid L1",
-    logo: `${baseIconsUrl}/nest-v1.jpg`,
+    logo: `${baseIconsUrl}/nest-clmm.jpg`,
     audits: "2",
     gecko_id: null,
     cmcId: null,
     tags: ["ve(3,3)"],
     chains: ["Hyperliquid L1"],
-    forkedFromIds: ["1407"],
+    forkedFromIds: ["3710"],
     audit_links: ["https://docs.usenest.xyz/security/audits"],
     module: "nest-platform/index.js",
     twitter: "NestExchange",
     dimensions: {
       fees: "nest",
       dexs: "nest",
+      "new-users": "nest",
+      "active-users": "nest",
     },
     parentProtocol: "parent#nest",
     listedAt: 1768416291
@@ -7900,10 +7926,24 @@ const data5: Protocol[] = [
     gecko_id: null,
     cmcId: null,
     category: "Yield",
-    chains: ["Ethereum"],
+    chains: ["Ethereum", "MegaETH"],
     forkedFromIds: ["3344"],
     module: "harborfi/index.js",
     twitter: "0xHarborFi",
+    github: ["baofinance"],
+    oraclesBreakdown: [
+      {name: "Harbor",type: "Primary",proof: ["https://github.com/baofinance/harbor-price-aggregators","https://github.com/baofinance/harbor-price-aggregators/tree/main/deployments",],
+        chains: [
+          { chain: "Ethereum", startDate: "2025-12-19" },
+          { chain: "MegaETH", startDate: "2026-04-29" },
+        ],
+      },
+      {name: "Chainlink",type: "Secondary",proof: ["https://github.com/baofinance/harbor-price-aggregators#overview"],},
+    ],
+    hallmarks: [
+      [1766102400, "Deployed on Mainnet"],
+      [1777420800, "Deployed on MegaETH"],
+    ],
     audit_links: ["https://www.harborfinance.io/2025_10_21_Final_Harbor_Collaborative_Audit_Report_1761050317.pdf"],
     listedAt: 1768245639,
   },
@@ -8072,19 +8112,19 @@ const data5: Protocol[] = [
   },
   {
     id: "7253",
-    name: "NEST V2",
+    name: "nest AMM",
     address: "hyperliquid:0x07c57E32a3C29D5659bda1d3EFC2E7BF004E3035",
     symbol: "NEST",
     url: "https://app.usenest.xyz/",
     description: "NEST is built for Hyperliquid. Smart pools and efficient swaps power onchain rewards that compound value back to voters and the ecosystem.",
     chain: "Hyperliquid L1",
-    logo: `${baseIconsUrl}/nest-v2.jpg`,
+    logo: `${baseIconsUrl}/nest-amm.jpg`,
     audits: "2",
     gecko_id: null,
     cmcId: null,
-    tags: ["CLMM"],
+    tags: ["ve(3,3)"],
     chains: ["Hyperliquid L1"],
-    forkedFromIds: ["3710"],
+    forkedFromIds: ["1407"],
     audit_links: ["https://docs.usenest.xyz/security/audits"],
     module: "nest-platform-v2/index.js",
     twitter: "NestExchange",
@@ -8217,7 +8257,7 @@ const data5: Protocol[] = [
     name: "ElfomoFi",
     address: null,
     symbol: "-",
-    url: "https://docs.elfomo.fi/",
+    url: "https://elfomo.fi/",
     description:
       "Oracle-based DEX on EVM.",
     chain: "Base",
@@ -8231,6 +8271,7 @@ const data5: Protocol[] = [
     twitter: "elfomo_fi",
     dimensions: {
       dexs: "elfomofi",
+      fees: "elfomofi",
     }
   },
   {
@@ -8612,7 +8653,7 @@ const data5: Protocol[] = [
       fees: "treadfi-perps",
     },
   },
-  {
+  /*{ // not tracking any metrics for this currently since fees were commented out too
     id: "7278",
     name: "StandX DUSD",
     address: null,
@@ -8629,12 +8670,11 @@ const data5: Protocol[] = [
     module: "dummy.js",
     twitter: "StandX_Official",
     parentProtocol: "parent#standx",
-    stablecoins: ["standx-dusd"],
     dimensions: {
       //fees: "standx-dusd", // it includes only withdrawl fees which misrepresents overall parent adapter stats, so disabling until perp fee stats are available
                              // more info https://github.com/DefiLlama/dimension-adapters/pull/6461 & https://github.com/DefiLlama/dimension-adapters/pull/6477#discussion_r3137067079
     },
-  },
+  },*/
   {
     id: "7279",
     name: "stabble CLMM",
@@ -9174,7 +9214,7 @@ const data5: Protocol[] = [
     address: null,
     symbol: "-",
     url: "https://sectorone.xyz",
-    description: "SectorOne is the native DLMM DEX on MegaETH, offering the most efficient liquidity layer for traders & liquidity providers.",
+    description: "SectorOne is a DLMM (Dynamic Liquidity Market Maker) liquidity layer & DEX designed for active liquidity. Built for traders, LPs, and vault curators to deploy, manage, and optimize liquidity through strategies, vaults, and dynamic fees across chains.",
     chain: "MegaETH",
     logo: `${baseIconsUrl}/sectorone-dlmm.jpg`,
     audits: "0",
@@ -9197,7 +9237,7 @@ const data5: Protocol[] = [
     address: null,
     symbol: "-",
     url: "https://sectorone.xyz",
-    description: "SectorOne is the native DLMM DEX on MegaETH, offering the most efficient liquidity layer for traders & liquidity providers.",
+    description: "SectorOne is a DLMM (Dynamic Liquidity Market Maker) liquidity layer & DEX designed for active liquidity. Built for traders, LPs, and vault curators to deploy, manage, and optimize liquidity through strategies, vaults, and dynamic fees across chains.",
     chain: "MegaETH",
     logo: `${baseIconsUrl}/sectorone-dlmm-vaults.jpg`,
     audits: "0",
@@ -10593,6 +10633,9 @@ const data5: Protocol[] = [
     twitter: "Glorb_wtf",
     listedAt: 1770658372,
     deadUrl: true,
+    dimensions: {
+      fees: "glorb",
+    },
   },
   {
     id: "7371",
@@ -12235,18 +12278,13 @@ const data5: Protocol[] = [
     twitter: "ZestProtocol",
     parentProtocol: "parent#zest",
     oraclesBreakdown: [
-      {
-        name: "Pyth",
-        type: "Secondary",
-        proof: ["https://docs.zestprotocol.com/start/borrow/zest-protocol-borrow-overview/oracles#zest-protocol-uses-pyth"]
-      },
-      {
-        name: "DIA",
-        type: "Primary",
-        proof: ["https://explorer.hiro.so/txid/SP2VCQJGH7PHP2DJK7Z0V48AGBHQAW3R3ZW1QF4N.alex-oracle-v1-1?chain=mainnet","https://github.com/DefiLlama/defillama-server/pull/10672"]
-      },
+      {name: "Pyth",type: "Secondary",proof: ["https://docs.zestprotocol.com/start/borrow/zest-protocol-borrow-overview/oracles#zest-protocol-uses-pyth"]},
+      {name: "DIA",type: "Primary",proof: ["https://explorer.hiro.so/txid/SP2VCQJGH7PHP2DJK7Z0V48AGBHQAW3R3ZW1QF4N.alex-oracle-v1-1?chain=mainnet","https://github.com/DefiLlama/defillama-server/pull/10672"]},
     ],
     listedAt: 1771865647,
+    dimensions: {
+      fees: "zest-v2",
+    },
   },
   {
     id: "7450",
@@ -12752,6 +12790,9 @@ const data5: Protocol[] = [
       },
     ],
     listedAt: 1772205522,
+    dimensions: {
+      fees: "purrlend",
+    },
     deadUrl: true,
   },
   {
@@ -12845,7 +12886,7 @@ const data5: Protocol[] = [
     symbol: "LIQ",
     url: "https://liquidium.fi/",
     description:
-      "Liquidium is a decentralized, cross-chain lending protocol for native assets. Users supply native assets like Bitcoin and borrow native assets like USDT on Ethereum through a non-custodial, pool-based architecture.",
+      "Liquidium is a decentralized, cross-chain lending protocol for native assets. Users supply native assets like Bitcoin and borrow native assets like USDT or USDC on Ethereum through a non-custodial, pool-based architecture.",
     chain: "ICP",
     logo: `${baseIconsUrl}/liquidium.jpg`,
     audits: "0",
@@ -13330,7 +13371,11 @@ const data5: Protocol[] = [
     chains: ["W Chain"],
     module: "wswap/index.js",
     twitter: "WChainNetwork",
-    listedAt: 1772731701
+    listedAt: 1772731701,
+    dimensions: {
+      fees: "wswap",
+      dexs: "wswap",
+    },
   },
   {
     id: "7502",
@@ -14087,12 +14132,13 @@ const data5: Protocol[] = [
   },
   {
     id: "7539",
-    name: "Bitway",
+    name: "Bitway Earn",
+    previousNames: ["Bitway"], 
     address: "bsc:0x444045b0ee1ee319a660a5e3d604ca0ffa35acaa",
     symbol: "BTW",
     url: "https://bitway.com/",
     description:
-      "Bitway is a capital gateway connecting on-chain liquidity with global markets.",
+      "Bitway Earn is an asset management product from the Bitway suite that allows users to deploy on-chain capital into global investment opportunities. It functions as a comprehensive gateway for both retail and institutional players seeking to access yield globally.",
     chain: "Binance",
     logo: `${baseIconsUrl}/bitway.jpg`,
     audits: "2",
@@ -14971,7 +15017,10 @@ const data5: Protocol[] = [
     github: ["Edel-Finance"],
     forkedFromIds: ["1599"],
     oraclesBreakdown: [ { name: "Chainlink", type: "Primary", proof: ["https://docs.edel.finance/concepts/oracles"] } ],
-    listedAt: 1774462905
+    listedAt: 1774462905,
+    dimensions: {
+      fees: "edel",
+    }
   },
   {
     id: "7579",
@@ -15241,6 +15290,7 @@ const data5: Protocol[] = [
         until: "2026-07-01",
       }
     ],
+    disabled: "not tracking any metrics for this currently since fees and volume were commented out",
   },
   {
     id: "7591",
@@ -15558,13 +15608,13 @@ const data5: Protocol[] = [
   },
   {
     id: "7605",
-    name: "Hotstuff",
+    name: "Hotstuff Perps",
     address: null,
     symbol: "-",
     url: "https://app.hotstuff.trade/",
     description: "Hotstuff is a purpose-built DeFi Layer 1 with a mission to enable Confidential Integrated Finance.",
     chain: "Hotstuff",
-    logo: `${baseIconsUrl}/hotstuff.jpg`,
+    logo: `${baseIconsUrl}/hotstuff-perps.jpg`,
     audits: "0",
     gecko_id: null,
     cmcId: null,
@@ -15573,6 +15623,7 @@ const data5: Protocol[] = [
     module: "dummy.js",
     twitter: "tradehotstuff",
     listedAt: 1775000619,
+    parentProtocol: "parent#hotstuff",
     dimensions: {
       derivatives: "hotstuff",
       "open-interest": "hotstuff-oi"
@@ -15760,6 +15811,7 @@ const data5: Protocol[] = [
     dimensions: {
       fees: "katana-perps",
       derivatives: "katana-perps",
+      "open-interest": "katana-perps-oi"
     },
   },
   {
@@ -16013,7 +16065,9 @@ const data5: Protocol[] = [
     dimensions: {
       derivatives: "bullbit-perp-dex",
       fees: "bullbit-perp-dex",
-    }
+      "open-interest": "bullbit-perp-dex-oi",
+    },
+    treasury: "bullbit-ai.js",
   },
   {
     id: "7626",
@@ -17594,13 +17648,13 @@ const data5: Protocol[] = [
     url: " ", // pending to add url https://armsys.xyz
     description:
       "Oracle-free LVR protection for Uniswap v4 LPs using volatility detection and Aave V3 yield routing",
-    chain: "Arbitrum",
+    chain: "Base",
     logo: `${baseIconsUrl}/armsys.jpg`,
     audits: "0",
     gecko_id: null,
     cmcId: null,
     category: "Yield",
-    chains: ["Arbitrum", "Base"],
+    chains: ["Base"],
     module: "armsys/index.js",
     twitter: "armsysxyz",
     github: ["ARMSys26"],

@@ -14,6 +14,10 @@ const tokens = [
     address: "0xee26bb0989691735c997dfdc49a4a607f75e190b",
     symbol: "VRPCS",
   },
+  {
+    address: "0x94f7ebc6ae0819a4b4e231ae6ddaaf9bfd2a1a86",
+    symbol: "VRPCQ",
+  },
 ];
 
 export async function r25(timestamp: number = 0): Promise<Write[]> {

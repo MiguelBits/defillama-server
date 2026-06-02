@@ -17,15 +17,17 @@ import {
   PGCacheRecord,
   getPGSyncMetadata,
   setPGSyncMetadata,
+  storeFlowsForId,
 } from './file-cache';
-import { initPG, fetchCurrentPG, fetchMetadataPG, fetchAllDailyRecordsPG, fetchMaxUpdatedAtPG, fetchAllDailyIdsPG, fetchDailyRecordsForIdPG, fetchDailyRecordsWithChainsPG, fetchDailyRecordsWithChainsForIdPG } from './db';
+import { initPG, fetchCurrentPG, fetchMetadataPG, fetchAllDailyRecordsPG, fetchMaxUpdatedAtPG, fetchAllDailyIdsPG, fetchDailyRecordsForIdPG, fetchDailyRecordsWithChainsPG, fetchDailyRecordsWithChainsForIdPG, fetchLatestHourlyForChartTipsPG, ChartTipRow, computeFlowSeries, FlowRow } from './db';
+import { getTimestampAtStartOfDay } from '../utils/date';
 
 import { shouldEmitRwaBreakdownItem } from './chartBreakdown';
 import { rwaSlug, toFiniteNumberOrZero, smoothHistoricalData, normalizeRwaMetadataForApiInPlace } from './utils';
 import { parentProtocolsById } from '../protocols/parentProtocols';
 import { protocolsById } from '../protocols/data';
 import { getChainLabelFromKey } from '../utils/normalizeChain';
-import { sendMessage } from '../utils/discord';
+import { sendThrottledRwaAlert } from './alerting';
 import {
   formatRwaHistoricalChartGuardReport,
   formatUsd,
@@ -42,6 +44,9 @@ const RWA_CHART_ALERT_MAX_ITEMS = Number(process.env.RWA_CHART_ALERT_MAX_ITEMS ?
 const RWA_CHART_ALERT_LOOKBACK_DAYS = Number(process.env.RWA_CHART_ALERT_LOOKBACK_DAYS ?? 1);
 const RWA_CHART_ALERT_FAIL_ON_SUSPICIOUS = process.env.RWA_CHART_ALERT_FAIL_ON_SUSPICIOUS !== 'false';
 const RWA_OMIT_ZERO_ASSET_BREAKDOWN_VALUES = process.env.RWA_OMIT_ZERO_ASSET_BREAKDOWN_VALUES === 'true';
+const RWA_CHART_ALERT_MIN_INTERVAL_HOURS = Number(process.env.RWA_CHART_ALERT_MIN_INTERVAL_HOURS ?? 4);
+const RWA_CHART_ALERT_MIN_INTERVAL_MS = RWA_CHART_ALERT_MIN_INTERVAL_HOURS * 60 * 60 * 1000;
+const RWA_HISTORICAL_CHART_GUARD_ALERT_KEY = 'historicalChartGuard';
 
 interface RWACurrentData {
   id: string;
@@ -93,17 +98,20 @@ interface RWAMetadata {
   data: any;
 }
 
-async function sendRwaCronAlert(message: string): Promise<void> {
-  const fullMessage = `[RWA cron] ${message}`;
-  if (!process.env.RWA_WEBHOOK) {
-    console.warn(fullMessage);
-    return;
-  }
-
+async function sendThrottledRwaHistoricalChartGuardAlert(message: string): Promise<void> {
   try {
-    await sendMessage(fullMessage, process.env.RWA_WEBHOOK, true);
-  } catch (e) {
-    console.error('Failed to send RWA cron Discord alert:', (e as any)?.message);
+    await sendThrottledRwaAlert({
+      alertKey: RWA_HISTORICAL_CHART_GUARD_ALERT_KEY,
+      message,
+      minIntervalMs: RWA_CHART_ALERT_MIN_INTERVAL_MS,
+      onSuppress: (throttleUntil) => {
+        console.warn(
+          `[RWA cron] Suppressing repeated suspicious RWA historical chart alert until ${new Date(throttleUntil).toISOString()}`
+        );
+      },
+    });
+  } catch (alertError) {
+    console.error('[RWA cron] Failed to send suspicious historical chart alert:', (alertError as any)?.message);
   }
 }
 
@@ -154,7 +162,7 @@ function generateIdMap(
   return idMap;
 }
 
-function trimLeadingZeros(data: Array<{ timestamp: number; onChainMcap: number; defiActiveTvl: number; activeMcap?: number }>): typeof data {
+export function trimLeadingZeros<T extends { timestamp: number; onChainMcap: number; defiActiveTvl: number; activeMcap?: number }>(data: T[]): T[] {
   while (data.length > 0) {
     const first = data[0];
     if (first.onChainMcap === 0 && first.defiActiveTvl === 0 && (!first.activeMcap || first.activeMcap === 0)) {
@@ -164,6 +172,41 @@ function trimLeadingZeros(data: Array<{ timestamp: number; onChainMcap: number; 
     }
   }
   return data;
+}
+
+// Live-tip handling: charts are built from DAILY (start-of-day timestamps),
+// but we append one extra point per id from the latest HOURLY row so the
+// rightmost point reflects the latest cron-tick values, not the early-morning
+// DAILY snapshot that the closest-to-midnight gate can pin us to.
+// stripLiveTips removes any prior tip before re-building so points stay
+// idempotent across runs (cleanly daily-aligned + at most one trailing tip).
+export function stripLiveTips<T extends { timestamp: number }>(data: T[]): T[] {
+  if (!data || data.length === 0) return data;
+  return data.filter((r) => r.timestamp === getTimestampAtStartOfDay(r.timestamp));
+}
+
+function appendChartTip(
+  dailyChart: Array<{ timestamp: number; onChainMcap: number; defiActiveTvl: number; activeMcap?: number }>,
+  tip: ChartTipRow | undefined,
+  hasActiveMcapData: boolean,
+): Array<{ timestamp: number; onChainMcap: number; defiActiveTvl: number; activeMcap?: number }> {
+  if (!tip) return dailyChart;
+  // If the tip is for the same UTC day as the last daily point, drop the daily
+  // point — the hourly tip is strictly fresher than the start-of-day daily row,
+  // and keeping both would leave a visible step between the (possibly stale)
+  // 00:00 daily value and the current tip value.
+  const tipDayStart = getTimestampAtStartOfDay(tip.timestamp);
+  const lastDailyTs = dailyChart.length > 0 ? dailyChart[dailyChart.length - 1].timestamp : 0;
+  if (lastDailyTs === tipDayStart) dailyChart.pop();
+  const newLast = dailyChart.length > 0 ? dailyChart[dailyChart.length - 1].timestamp : 0;
+  if (tip.timestamp <= newLast) return dailyChart;
+  dailyChart.push({
+    timestamp: tip.timestamp,
+    onChainMcap: tip.aggregatemcap,
+    defiActiveTvl: tip.aggregatedefiactivetvl,
+    activeMcap: hasActiveMcapData ? tip.aggregatedactivemcap : undefined,
+  });
+  return dailyChart;
 }
 
 async function generateAllHistoricalDataIncremental(metadata: RWAMetadata[]): Promise<{ updatedIds: number; totalRecords: number }> {
@@ -185,17 +228,17 @@ async function generateAllHistoricalDataIncremental(metadata: RWAMetadata[]): Pr
   let updatedIds = 0;
   let totalRecords = 0;
 
+  // Latest HOURLY row per id provides a live tip that's appended to the
+  // (daily-aligned) chart series after smoothing. Fetched once upfront so the
+  // per-id loop is just a map lookup.
+  const latestHourlyTips = await fetchLatestHourlyForChartTipsPG();
+
   if (lastSyncTimestamp) {
     // Incremental sync: fetch only updated records
     console.log(`Incremental sync: fetching records updated after ${lastSyncTimestamp.toISOString()}`);
 
     const dailyRecords = await fetchAllDailyRecordsPG(lastSyncTimestamp);
     console.log(`Fetched ${dailyRecords.length} updated daily records from database`);
-
-    if (dailyRecords.length === 0) {
-      console.log('No new records to process');
-      return { updatedIds: 0, totalRecords: 0 };
-    }
 
     // Group records by ID
     const recordsById: { [id: string]: any[] } = {};
@@ -213,16 +256,22 @@ async function generateAllHistoricalDataIncremental(metadata: RWAMetadata[]): Pr
       });
     });
 
-    const ids = Object.keys(recordsById);
-    console.log(`Processing ${ids.length} unique IDs with updates`);
+    // Process the union of (ids with new daily rows) and (ids with a hourly tip)
+    // so the tip stays fresh on every cron tick, even for ids whose daily row
+    // didn't change this run.
+    const ids = Array.from(new Set([...Object.keys(recordsById), ...Object.keys(latestHourlyTips)]));
+    console.log(`Processing ${ids.length} unique IDs (with daily updates or hourly tip)`);
 
-    // Process each ID with updates
     for (const id of ids) {
       try {
-        const newRecords = recordsById[id];
+        const newRecords = recordsById[id] ?? [];
         const existingData = await readHistoricalDataForId(id);
-        const mergedData = mergeHistoricalData(existingData, newRecords);
-        await storeHistoricalDataForId(id, trimLeadingZeros(smoothHistoricalData(mergedData)));
+        if ((!existingData || existingData.length === 0) && newRecords.length === 0) continue;
+        const existingNoTip = stripLiveTips(existingData ?? []);
+        const mergedData = mergeHistoricalData(existingNoTip, newRecords);
+        const dailyOnly = trimLeadingZeros(smoothHistoricalData(mergedData));
+        const withTip = appendChartTip(dailyOnly, latestHourlyTips[id], activeMcapDataMap[id] ?? false);
+        await storeHistoricalDataForId(id, withTip);
         updatedIds++;
         totalRecords += newRecords.length;
       } catch (e) {
@@ -251,7 +300,9 @@ async function generateAllHistoricalDataIncremental(metadata: RWAMetadata[]): Pr
           activeMcap: activeMcapData ? toFiniteNumberOrZero(record.aggregatedactivemcap) : undefined,
         }));
 
-        await storeHistoricalDataForId(id, trimLeadingZeros(smoothHistoricalData(historicalData)));
+        const dailyOnly = trimLeadingZeros(smoothHistoricalData(historicalData));
+        const withTip = appendChartTip(dailyOnly, latestHourlyTips[id], activeMcapData);
+        await storeHistoricalDataForId(id, withTip);
         updatedIds++;
         totalRecords += records.length;
 
@@ -284,7 +335,7 @@ function sumObjectValues(obj: any): number {
   }, 0);
 }
 
-const PG_CACHE_METRICS = ['onChainMcap', 'activeMcap', 'defiActiveTvl'] as const;
+const PG_CACHE_METRICS = ['onChainMcap', 'activeMcap', 'defiActiveTvl', 'totalSupply'] as const;
 
 // Maximum consecutive anomalous days to bridge (must match utils.ts MAX_SPIKE_RUN)
 const MAX_SPIKE_RUN = 5;
@@ -347,8 +398,9 @@ function removePGSpikes(
  * Smooths PG cache time-series data (chain-level breakdown) by:
  *   1. Removing spikes/dips (including multi-day runs) at aggregate and per-chain level.
  *   2. Filling multi-day gaps with linear interpolation.
+ * totalSupply nulls are preserved (no synthesised values, no gap interpolation).
  */
-function smoothPGCacheData(data: PGCacheData): PGCacheData {
+export function smoothPGCacheData(data: PGCacheData): PGCacheData {
   const timestamps = Object.keys(data).map(Number).sort((a, b) => a - b);
   if (timestamps.length < 2) return data;
 
@@ -362,6 +414,7 @@ function smoothPGCacheData(data: PGCacheData): PGCacheData {
     onChainMcap: data[ts].onChainMcap,
     activeMcap: data[ts].activeMcap,
     defiActiveTvl: data[ts].defiActiveTvl,
+    totalSupply: data[ts].totalSupply,
     chains: Object.fromEntries(
       Object.entries(data[ts].chains || {}).map(([k, v]) => [k, { ...v }])
     ),
@@ -371,20 +424,27 @@ function smoothPGCacheData(data: PGCacheData): PGCacheData {
   for (const metric of PG_CACHE_METRICS) {
     removePGSpikes(
       entries,
-      (e) => e[metric],
-      (e, v) => { e[metric] = v; }
+      (e) => (e[metric] === null ? NaN : e[metric]),
+      (e, v) => {
+        if (metric === 'totalSupply' && e[metric] === null) return;
+        e[metric] = v;
+      }
     );
   }
 
   // Step 1b: remove spikes/dips — per-chain metrics
-  const zeroPGChain = { onChainMcap: 0, activeMcap: 0, defiActiveTvl: 0 };
+  const defaultPGChain = { onChainMcap: 0, activeMcap: 0, defiActiveTvl: 0, totalSupply: null as number | null };
   for (const chainKey of allChainKeys) {
     for (const metric of PG_CACHE_METRICS) {
       removePGSpikes(
         entries,
-        (e) => (e.chains[chainKey] ?? zeroPGChain)[metric],
+        (e) => {
+          const v = (e.chains[chainKey] ?? defaultPGChain)[metric];
+          return v === null ? NaN : v;
+        },
         (e, v) => {
-          if (!e.chains[chainKey]) e.chains[chainKey] = { ...zeroPGChain };
+          if (!e.chains[chainKey]) e.chains[chainKey] = { ...defaultPGChain };
+          if (metric === 'totalSupply' && e.chains[chainKey].totalSupply === null) return;
           e.chains[chainKey][metric] = v;
         }
       );
@@ -392,10 +452,12 @@ function smoothPGCacheData(data: PGCacheData): PGCacheData {
   }
 
   // Step 2: fill gaps with linear interpolation
+  const interpSupply = (a: number | null, b: number | null, f: number): number | null =>
+    a === null || b === null ? null : a + (b - a) * f;
   const result: PGCacheData = {};
   for (let i = 0; i < entries.length; i++) {
-    const { timestamp, chains, onChainMcap, activeMcap, defiActiveTvl } = entries[i];
-    result[timestamp] = { onChainMcap, activeMcap, defiActiveTvl, chains };
+    const { timestamp, chains, onChainMcap, activeMcap, defiActiveTvl, totalSupply } = entries[i];
+    result[timestamp] = { onChainMcap, activeMcap, defiActiveTvl, totalSupply, chains };
 
     if (i < entries.length - 1) {
       const curr = entries[i];
@@ -407,18 +469,20 @@ function smoothPGCacheData(data: PGCacheData): PGCacheData {
         const intTs = curr.timestamp + 86400 * j;
         const intChains: PGCacheRecord['chains'] = {};
         for (const chainKey of allChainKeys) {
-          const cC = curr.chains[chainKey] ?? zeroPGChain;
-          const nC = next.chains[chainKey] ?? zeroPGChain;
+          const cC = curr.chains[chainKey] ?? defaultPGChain;
+          const nC = next.chains[chainKey] ?? defaultPGChain;
           intChains[chainKey] = {
             onChainMcap: cC.onChainMcap + (nC.onChainMcap - cC.onChainMcap) * f,
             activeMcap: cC.activeMcap + (nC.activeMcap - cC.activeMcap) * f,
             defiActiveTvl: cC.defiActiveTvl + (nC.defiActiveTvl - cC.defiActiveTvl) * f,
+            totalSupply: interpSupply(cC.totalSupply, nC.totalSupply, f),
           };
         }
         result[intTs] = {
           onChainMcap: curr.onChainMcap + (next.onChainMcap - curr.onChainMcap) * f,
           activeMcap: curr.activeMcap + (next.activeMcap - curr.activeMcap) * f,
           defiActiveTvl: curr.defiActiveTvl + (next.defiActiveTvl - curr.defiActiveTvl) * f,
+          totalSupply: interpSupply(curr.totalSupply, next.totalSupply, f),
           chains: intChains,
         };
       }
@@ -428,11 +492,14 @@ function smoothPGCacheData(data: PGCacheData): PGCacheData {
   return result;
 }
 
-function processRecordsToPGCache(records: any[]): PGCacheData {
+export function processRecordsToPGCache(records: any[]): PGCacheData {
   const data: PGCacheData = {};
+  // totalSupply: null = unknown, 0 = real zero. Chains with mcap > 0 but
+  // missing from supplyObj stay null (data gap, not real zero).
+  const newChainEntry = () => ({ onChainMcap: 0, activeMcap: 0, defiActiveTvl: 0, totalSupply: null as number | null });
   for (const record of records) {
-    // DB functions already parse JSON fields
-    const { mcap: mcapObj, activemcap: activemcapObj, defiactivetvl: defitvlObj } = record;
+    const { mcap: mcapObj, activemcap: activemcapObj, defiactivetvl: defitvlObj, totalsupply: totalsupplyObj } = record;
+    const supplyObj = totalsupplyObj || {};
 
     const chains: PGCacheRecord['chains'] = {};
     let totalOnChainMcap = 0;
@@ -440,34 +507,72 @@ function processRecordsToPGCache(records: any[]): PGCacheData {
     let totalDefiActiveTvl = 0;
 
     for (const [chainKey, value] of Object.entries(toObjectMap(mcapObj))) {
-      if (!chains[chainKey]) chains[chainKey] = { onChainMcap: 0, activeMcap: 0, defiActiveTvl: 0 };
+      if (!chains[chainKey]) chains[chainKey] = newChainEntry();
       const numValue = Number(value) || 0;
       chains[chainKey].onChainMcap = numValue;
       totalOnChainMcap += numValue;
     }
 
     for (const [chainKey, value] of Object.entries(toObjectMap(activemcapObj))) {
-      if (!chains[chainKey]) chains[chainKey] = { onChainMcap: 0, activeMcap: 0, defiActiveTvl: 0 };
+      if (!chains[chainKey]) chains[chainKey] = newChainEntry();
       const numValue = Number(value) || 0;
       chains[chainKey].activeMcap = numValue;
       totalActiveMcap += numValue;
     }
 
     for (const [chainKey, protocols] of Object.entries(toObjectMap(defitvlObj))) {
-      if (!chains[chainKey]) chains[chainKey] = { onChainMcap: 0, activeMcap: 0, defiActiveTvl: 0 };
+      if (!chains[chainKey]) chains[chainKey] = newChainEntry();
       const numValue = sumObjectValues(protocols);
       chains[chainKey].defiActiveTvl = numValue;
       totalDefiActiveTvl += numValue;
     }
 
+    for (const [chainKey, value] of Object.entries(supplyObj)) {
+      if (!chains[chainKey]) chains[chainKey] = newChainEntry();
+      chains[chainKey].totalSupply = Number(value) || 0;
+    }
+
+    // For chains with mcap entry but no supplyObj entry: 0 mcap means real zero, else unknown.
+    for (const chainKey of Object.keys(chains)) {
+      if (chains[chainKey].totalSupply !== null) continue;
+      if (chains[chainKey].onChainMcap === 0) chains[chainKey].totalSupply = 0;
+    }
+
+    // Aggregate = sum of known chains. Null only when every chain is unknown but mcap > 0.
+    let totalSupplyAgg: number | null = 0;
+    let anyKnown = false;
+    for (const c of Object.values(chains)) {
+      if (c.totalSupply === null) continue;
+      anyKnown = true;
+      totalSupplyAgg += c.totalSupply;
+    }
+    if (!anyKnown && totalOnChainMcap > 0) totalSupplyAgg = null;
+
     data[record.timestamp] = {
       onChainMcap: totalOnChainMcap,
       activeMcap: totalActiveMcap,
       defiActiveTvl: totalDefiActiveTvl,
+      totalSupply: totalSupplyAgg,
       chains,
     };
   }
   return data;
+}
+
+// Pre-compute the daily net-flow series for one id from already-fetched
+// chain-level daily records. Mirrors the logic the /flows/:id route used to
+// run on every request.
+export function computeFlowsFromChainRecords(records: any[]) {
+  const flowRows: FlowRow[] = records.map((r) => ({
+    timestamp: r.timestamp,
+    mcap: r.mcap || {},
+    totalsupply: r.totalsupply || {},
+  }));
+  return computeFlowSeries(flowRows, getChainLabelFromKey);
+}
+
+async function storeFlowsForIdFromChainRecords(id: string, records: any[]): Promise<void> {
+  await storeFlowsForId(id, computeFlowsFromChainRecords(records));
 }
 
 function toObjectMap(value: any): Record<string, any> {
@@ -511,12 +616,17 @@ async function alertPGCacheRepairs(events: PGCacheRepairEvent[]): Promise<void> 
       return `- ${event.id}: ${event.reason}; cache rows ${event.existingRows} -> ${event.rebuiltRows}; incremental rows ${event.incrementalRows}; range ${range}`;
     });
   const suffix = events.length > lines.length ? `\n...and ${events.length - lines.length} more IDs` : '';
-  await sendRwaCronAlert(
-    `Rebuilt incomplete RWA pg-cache entries during incremental sync.\n` +
-    `This prevents old DB history from being dropped from /chart/asset and aggregate charts.\n` +
-    lines.join('\n') +
-    suffix
-  );
+  try {
+    await sendThrottledRwaAlert({
+      alertKey: 'pgCacheRepairs',
+      message: `Rebuilt incomplete RWA pg-cache entries during incremental sync.\n` +
+      `This prevents old DB history from being dropped from /chart/asset and aggregate charts.\n` +
+      lines.join('\n') +
+      suffix,
+    });
+  } catch (alertError) {
+    console.error('[RWA cron] Failed to send pg-cache repair alert:', (alertError as any)?.message);
+  }
 }
 
 async function alertPGCacheProcessingErrors(errors: PGCacheProcessingError[]): Promise<void> {
@@ -525,11 +635,16 @@ async function alertPGCacheProcessingErrors(errors: PGCacheProcessingError[]): P
     .slice(0, RWA_CHART_ALERT_MAX_ITEMS)
     .map((error) => `- ${error.id}: ${error.message}`);
   const suffix = errors.length > lines.length ? `\n...and ${errors.length - lines.length} more IDs` : '';
-  await sendRwaCronAlert(
-    `Failed to generate RWA pg-cache for ${errors.length} IDs; refusing to publish incomplete historical cache.\n` +
-    lines.join('\n') +
-    suffix
-  );
+  try {
+    await sendThrottledRwaAlert({
+      alertKey: 'pgCacheProcessingErrors',
+      message: `Failed to generate RWA pg-cache for ${errors.length} IDs; refusing to publish incomplete historical cache.\n` +
+      lines.join('\n') +
+      suffix,
+    });
+  } catch (alertError) {
+    console.error('[RWA cron] Failed to send pg-cache processing error alert:', (alertError as any)?.message);
+  }
 }
 
 async function generatePGCache(): Promise<{ updatedIds: number }> {
@@ -567,24 +682,31 @@ async function generatePGCache(): Promise<{ updatedIds: number }> {
       const existingCache = await readPGCacheForId(id);
       const existingRows = getPGCacheRowCount(existingCache);
       const shouldRebuild = !existingCache || existingRows < MIN_PG_CACHE_ROWS_FOR_INCREMENTAL_REUSE;
+      const newData = processRecordsToPGCache(idRecords);
+      const incrementallyMerged = mergePGCacheData(existingCache, newData);
+      const incrementallyMergedRows = getPGCacheRowCount(incrementallyMerged);
+      // Flows depend on the full per-id history; refetch and recompute.
+      const fullRecords = await fetchDailyRecordsWithChainsForIdPG(id);
 
       if (shouldRebuild) {
-        const fullRecords = await fetchDailyRecordsWithChainsForIdPG(id);
         const fullData = processRecordsToPGCache(fullRecords);
+        const rebuiltRows = getPGCacheRowCount(fullData);
         await storePGCacheForId(id, smoothPGCacheData(fullData));
-        repairEvents.push({
-          id,
-          reason: existingCache ? 'suspiciously small existing pg-cache' : 'missing existing pg-cache',
-          existingRows,
-          rebuiltRows: fullRecords.length,
-          incrementalRows: idRecords.length,
-          ...getRecordRange(fullRecords),
-        });
+
+        if (rebuiltRows > incrementallyMergedRows) {
+          repairEvents.push({
+            id,
+            reason: existingCache ? 'suspiciously small existing pg-cache' : 'missing existing pg-cache',
+            existingRows,
+            rebuiltRows,
+            incrementalRows: incrementallyMergedRows,
+            ...getRecordRange(fullRecords),
+          });
+        }
       } else {
-        const newData = processRecordsToPGCache(idRecords);
-        const merged = mergePGCacheData(existingCache, newData);
-        await storePGCacheForId(id, smoothPGCacheData(merged));
+        await storePGCacheForId(id, smoothPGCacheData(incrementallyMerged));
       }
+      await storeFlowsForIdFromChainRecords(id, fullRecords);
       updatedIds++;
     }
   } else {
@@ -601,6 +723,7 @@ async function generatePGCache(): Promise<{ updatedIds: number }> {
 
         const data = processRecordsToPGCache(records);
         await storePGCacheForId(id, smoothPGCacheData(data));
+        await storeFlowsForIdFromChainRecords(id, records);
         updatedIds++;
 
         if ((i + 1) % 100 === 0) {
@@ -1040,13 +1163,13 @@ async function alertSuspiciousRwaHistoricalCharts(
   if (!hasSuspiciousRwaHistoricalChartReport(report)) return;
 
   const message = formatRwaHistoricalChartGuardReport(report, metadata, options);
-  await sendRwaCronAlert(message);
+  await sendThrottledRwaHistoricalChartGuardAlert(message);
   if (RWA_CHART_ALERT_FAIL_ON_SUSPICIOUS) {
     throw new Error('Suspicious RWA historical chart shape detected; refusing to publish aggregate historical chart cache');
   }
 }
 
-async function generateAggregatedHistoricalCharts(metadata: RWAMetadata[]): Promise<void> {
+export async function generateAggregatedHistoricalCharts(metadata: RWAMetadata[]): Promise<void> {
   console.log('Generating aggregated historical charts...');
   const startTime = Date.now();
 
@@ -1184,6 +1307,7 @@ async function generateAggregatedHistoricalCharts(metadata: RWAMetadata[]): Prom
 
     const categories = Array.isArray(m.data.category) ? m.data.category.filter(Boolean) : [];
     const primaryCategory = categories[0];
+    const categoryAssetBreakdownCategories = new Set(categories);
     const platform = m.data.parentPlatform;
     const assetGroup = typeof m.data.assetGroup === "string" && m.data.assetGroup.trim() ? m.data.assetGroup.trim() : null;
 
@@ -1229,7 +1353,7 @@ async function generateAggregatedHistoricalCharts(metadata: RWAMetadata[]): Prom
       addBreakdownValue(allDpa, 'activeMcap', timestamp, canonicalMarketId, totalActiveMcap);
       addBreakdownValue(allDpa, 'defiActiveTvl', timestamp, canonicalMarketId, totalTvl);
 
-      // Aggregate by category using only the primary category to avoid double-counting.
+      // Aggregate category totals using only the primary category to avoid double-counting.
       const categoryItems: Record<string, any> = {};
       if (primaryCategory) {
         const dp = ensureDataPoint(byCategory, primaryCategory, timestamp);
@@ -1237,16 +1361,20 @@ async function generateAggregatedHistoricalCharts(metadata: RWAMetadata[]): Prom
         dp.activeMcap += totalActiveMcap;
         dp.defiActiveTvl += totalTvl;
 
-        const dpa = ensureBreakdownDataPoint(byCategoryTickerBreakdown, primaryCategory, timestamp, canonicalMarketId);
-        addBreakdownValue(dpa, 'onChainMcap', timestamp, canonicalMarketId, totalOnChainMcap);
-        addBreakdownValue(dpa, 'activeMcap', timestamp, canonicalMarketId, totalActiveMcap);
-        addBreakdownValue(dpa, 'defiActiveTvl', timestamp, canonicalMarketId, totalTvl);
-
         categoryItems[primaryCategory] = {
           onChainMcap: totalOnChainMcap,
           activeMcap: totalActiveMcap,
           defiActiveTvl: totalTvl,
         };
+      }
+
+      // Category asset-breakdown files power category detail charts, so include
+      // every asset category rather than only the primary aggregate bucket.
+      for (const category of categoryAssetBreakdownCategories) {
+        const dpa = ensureBreakdownDataPoint(byCategoryTickerBreakdown, category, timestamp, canonicalMarketId);
+        addBreakdownValue(dpa, 'onChainMcap', timestamp, canonicalMarketId, totalOnChainMcap);
+        addBreakdownValue(dpa, 'activeMcap', timestamp, canonicalMarketId, totalActiveMcap);
+        addBreakdownValue(dpa, 'defiActiveTvl', timestamp, canonicalMarketId, totalTvl);
       }
 
       // Aggregate by platform
@@ -1388,6 +1516,7 @@ async function generateAggregatedHistoricalCharts(metadata: RWAMetadata[]): Prom
   const chainSlug = (k: string) => rwaSlug(getChainLabelFromKey(k));
   warnSlugCollisions('byChain', Object.keys(byChain), chainSlug);
   warnSlugCollisions('byCategory', Object.keys(byCategory), rwaSlug);
+  warnSlugCollisions('byCategoryTickerBreakdown', Object.keys(byCategoryTickerBreakdown), rwaSlug);
   warnSlugCollisions('byPlatform', Object.keys(byPlatform), rwaSlug);
   warnSlugCollisions('byAssetGroup', Object.keys(byAssetGroup), rwaSlug);
 
@@ -1561,11 +1690,15 @@ async function main() {
   }
 }
 
-main()
-  .then(() => process.exit(0))
-  .catch((error) => {
-    console.error('Fatal error:', error);
-    process.exit(1);
-  });
+// Only auto-run when invoked directly (e.g. `ts-node defi/src/rwa/cron.ts`).
+// This guard keeps importing the module from tests / scripts side-effect-free.
+if (require.main === module) {
+  main()
+    .then(() => process.exit(0))
+    .catch((error) => {
+      console.error('Fatal error:', error);
+      process.exit(1);
+    });
+}
 
 // Run with: npx ts-node defi/src/rwa/cron.ts

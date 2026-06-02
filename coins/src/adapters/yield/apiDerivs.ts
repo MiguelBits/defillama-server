@@ -399,6 +399,27 @@ const configs: { [adapter: string]: Config } = {
     symbol: "stZIG",
     confidence: 1
   },
+  CUSD: {
+    rate: async () => {
+      const pools = await fetch('https://api.cctools.network/api/markets/send/pools', {
+        headers: { 'User-Agent': 'DL coins' },
+      }).then((r) => r.json());
+      const pool = pools.find(
+        (p: any) => p.id === 'send-cusd-usdcx' && p.status === 'live',
+      );
+      if (!pool || !pool.baseReserve?.amount || !pool.quoteReserve?.amount) throw new Error('CUSD: missing reserve data');
+      const cusd = Number(pool.baseReserve.amount);
+      const usdcx = Number(pool.quoteReserve.amount);
+      if (!cusd || isNaN(cusd) || !usdcx || isNaN(usdcx)) throw new Error('CUSD: Invalid reserve data');
+      const ratio = usdcx / cusd;
+      return ratio;
+    },
+    chain: 'canton',
+    address: '481871d4-ca56-42a8-b2d3-4b7d28742946',
+    underlying: 'USDCx',
+    decimals: '6',
+    symbol: 'CUSD',
+  },
 };
 
 export async function apiDerivs(timestamp: number) {

@@ -18,4 +18,10 @@ export default {
       return data
     }
   },
+  stellar: {
+    contractCall: async (contractId, method) => {
+      const { data } = await client.get(`/stellar/contract-call/${contractId}/${method}`)
+      return data
+    },
+  },
 }

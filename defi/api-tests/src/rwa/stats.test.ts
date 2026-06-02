@@ -5,6 +5,7 @@ import {
   expectSuccessfulResponse,
   expectObjectResponse,
 } from '../../utils/testHelpers';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.RWA.BASE_URL);
 
@@ -16,6 +17,10 @@ describe('RWA API - Stats', () => {
   });
 
   describe('Basic Response Validation', () => {
+    it('should expose CORS headers', () => {
+      expectCorsHeaders(response);
+    });
+
     it('should return successful response', () => {
       expectSuccessfulResponse(response);
     });
@@ -38,6 +43,10 @@ describe('RWA API - ID Map', () => {
   });
 
   describe('Basic Response Validation', () => {
+    it('should expose CORS headers', () => {
+      expectCorsHeaders(response);
+    });
+
     it('should return successful response', () => {
       expectSuccessfulResponse(response);
     });

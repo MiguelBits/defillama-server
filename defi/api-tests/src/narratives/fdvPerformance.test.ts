@@ -5,9 +5,11 @@ import { narrativePerformanceResponseSchema } from './schemas';
 import {
   expectSuccessfulResponse,
   expectValidNumber,
+  expectFreshData,
 } from '../../utils/testHelpers';
 import { ApiResponse } from '../../utils/config/apiClient';
 import { validate } from '../../utils/validation';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.NARRATIVES.BASE_URL);
 
@@ -26,6 +28,10 @@ describe('Narratives API - FDV Performance', () => {
       responses[period] = results[index];
     });
   }, 90000);
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(responses[testPeriods[0]]);
+  });
 
   testPeriods.forEach((period) => {
     describe(`Period: ${period}`, () => {
@@ -70,11 +76,17 @@ describe('Narratives API - FDV Performance', () => {
           const response = responses[period];
           if (response.status === 200) {
             const timestamps = response.data.map((point) => point.date);
-            
+
             for (let i = 1; i < timestamps.length; i++) {
               expect(timestamps[i]).toBeGreaterThanOrEqual(timestamps[i - 1]);
             }
           }
+        });
+
+        it('should have a fresh latest datapoint (within 1 day)', () => {
+          const response = responses[period];
+          if (response.status !== 200 || !Array.isArray(response.data) || response.data.length === 0) return;
+          expectFreshData(response.data.map((p) => p.date), 86400);
         });
 
         it('should have consistent narrative categories across data points', () => {

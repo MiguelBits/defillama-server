@@ -8,6 +8,7 @@ import {
   expectNonNegativeNumber,
 } from '../../utils/testHelpers';
 import { ApiResponse } from '../../utils/config/apiClient';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.BRIDGES.BASE_URL);
 
@@ -36,6 +37,11 @@ describe('Bridges API - Bridge Detail', () => {
       responses[id] = results[index];
     });
   }, 60000);
+
+  it('should expose CORS headers', () => {
+    const firstId = Object.keys(responses)[0];
+    expectCorsHeaders(responses[firstId]);
+  });
 
   Object.keys(testBridgeIds).forEach((_, index) => {
     const bridgeId = testBridgeIds[index];

@@ -2,7 +2,7 @@ import protocols from '../../src/protocols/data'
 import treasuries from '../../src/protocols/treasury'
 import entities from '../../src/protocols/entities'
 import { IProtocol } from '../../src/types';
-import { clearAllDimensionsCache, clearProtocolCacheById } from '../../src/cli/utils/clearProtocolCache';
+import { clearAllDimensionsCache, queueProtocolCacheReset } from '../../src/cli/utils/clearProtocolCache';
 import { storeTvl2, storeTvl2Options } from '../../src/storeTvlInterval/getAndStoreTvl';
 import { humanizeNumber } from '@defillama/sdk';
 import evmChainProvidersList from '@defillama/sdk/build/providers.json';
@@ -13,6 +13,9 @@ import { dailyTokensTvl, dailyTvl, dailyUsdTokensTvl, dailyRawTokensTvl, } from 
 import { importAdapterDynamic } from '../../src/utils/imports/importAdapter';
 import * as sdk from '@defillama/sdk';
 import { getUnixTimeNow } from '../../src/api2/utils/time';
+import BigNumber from 'bignumber.js';
+
+const chainFailedCallsSets: any = {}
 
 const tvlNameMap: Record<string, IProtocol> = {}
 const allItems = [...protocols, ...treasuries, ...entities]
@@ -35,10 +38,11 @@ export async function runTvlAction(ws: any, data: any) {
   switch (action) {
     case 'tvl-delete-get-list':
       await tvlDeleteGetList(ws, protocol, options)
+      await queueProtocolCacheReset(protocol.id)
       break;
     case 'clear-cache':
-      await clearProtocolCacheById(protocol.id)
-      console.log('Cache cleared for protocol:', protocol.name);
+      await queueProtocolCacheReset(protocol.id)
+      console.log('Cache reset queued for protocol:', protocol.name);
       break;
     case 'clear-all-dimensions-cache':
       await clearAllDimensionsCache()
@@ -70,7 +74,7 @@ async function fillLast(ws: any, protocol: IProtocol, _options: any) {
 
 
 async function fillOld(ws: any, protocol: IProtocol, options: any) {
-  let { chains, skipBlockFetch, dateFrom, dateTo, parallelCount, maxRetries = 3, breakIfTvlIsZero = false, removeTokenTvl = false, removeTokenTvlSymbols = '', skipMissingChains= false } = options;
+  let { chains, skipBlockFetch, dateFrom, dateTo, parallelCount, maxRetries = 3, breakIfTvlIsZero = false, removeTokenTvl = false, removeTokenTvlSymbols = '', skipMissingChains = false } = options;
 
 
   // if (removeTokenTvl) chains = ''
@@ -85,11 +89,12 @@ async function fillOld(ws: any, protocol: IProtocol, options: any) {
   const tokenUsdRecords: any = {}
   const aggTvlData: any = {} // overall protocol tvl with chain breakdown
   let refillWithCachedData = chains?.length || removeTokenTvl
+  const tokenRemovalChainsSet = new Set()
   const skipSKs: Set<number> = new Set()
-    const timeFilter = {
-      timestampTo: options.dateTo + 86400 * 2,
-      timestampFrom: options.dateFrom - 86400 * 2,
-    }
+  const timeFilter = {
+    timestampTo: options.dateTo + 86400 * 2,
+    timestampFrom: options.dateFrom - 86400 * 2,
+  }
 
 
   // fetch the final data for comparison
@@ -104,7 +109,7 @@ async function fillOld(ws: any, protocol: IProtocol, options: any) {
   }
 
   if (refillWithCachedData) {
-    chains = chains?.split(',')
+    chains = chains?.split(',').filter((c: string) => c.trim()) || []
     const rawTokenTvlRecords = await getProtocolItems(dailyRawTokensTvl, protocol.id, timeFilter)
     const tokenUsdRecordsFromDB = await getProtocolItems(dailyUsdTokensTvl, protocol.id, timeFilter)
     const tokenSymbolRecordsFromDB = await getProtocolItems(dailyTokensTvl, protocol.id, timeFilter)
@@ -136,7 +141,7 @@ async function fillOld(ws: any, protocol: IProtocol, options: any) {
 
 
       // build symbol mapping
-      await buildTokenSymbolMapping({ usdTvlRecords, rawRecords, symbolsToRemove, addressesToRemove, chains })
+      const tokenInfoMap = await buildTokenSymbolMapping({ usdTvlRecords, rawRecords, symbolsToRemove, addressesToRemove, chains })
 
       console.log('Removing token tvl for symbols:', symbolsToRemove.join(', '), 'and addresses:', Array.from(addressesToRemove).join(', '))
 
@@ -146,16 +151,33 @@ async function fillOld(ws: any, protocol: IProtocol, options: any) {
         const rawRecordClone = JSON.parse(JSON.stringify(record))
         const date = new Date(Number(sk) * 1000).toLocaleDateString()
         let tokensRemoved = false
+        const removalRows: any[] = []
         for (const chain of Object.keys(record as any)) {
           for (const addr of Object.keys((record as any)[chain])) {
             let checkAddr = addr.toLowerCase()
             if (addressesToRemove.has(checkAddr)) {
+              const value = (record as any)[chain][addr]
               delete (record as any)[chain][addr]
               tokensRemoved = true
-              console.log(`Removed token ${addr} on chain ${chain} for date ${date} by address match`);
+              const bareAddr = checkAddr.startsWith(chain + ':') ? checkAddr.slice(chain.length + 1) : checkAddr
+              const info = tokenInfoMap[chain]?.[bareAddr]
+              const decimals = info?.decimals
+              const symbol = info?.symbol
+              let normalized: string | number = ''
+              if (typeof decimals === 'number' && value != null) {
+                try {
+                  normalized = new BigNumber(value as any).div(10 ** decimals).toNumber()
+                } catch { /* leave blank */ }
+              }
+              removalRows.push({ chain, address: addr, symbol: symbol ?? '', decimals: decimals ?? '', rawValue: value, normalizedBalance: normalized })
+              tokenRemovalChainsSet.add(chain)
               continue;
             }
           }
+        }
+        if (removalRows.length) {
+          console.log(`Removed tokens for date ${date} (sk=${sk}):`)
+          console.table(removalRows)
         }
 
         if (!tokensRemoved) {  // couldnt find any token to remove
@@ -242,6 +264,7 @@ async function fillOld(ws: any, protocol: IProtocol, options: any) {
           breakIfTvlIsZero,
           skipBlockData: skipBlockFetch,
           overwriteExistingData: true,
+          isTokenRemovalFlow: removeTokenTvl,
         }
 
         if (removeTokenTvl) {
@@ -260,7 +283,11 @@ async function fillOld(ws: any, protocol: IProtocol, options: any) {
         }
 
         if (refillWithCachedData) {
-          options.chainsToRefill = chains
+          let refillingChains = chains
+          if (refillingChains.length === 0)
+            refillingChains = [...tokenRemovalChainsSet]
+
+          options.chainsToRefill = refillingChains
           options.partialRefill = true
           const cacheData = rawRecords[unixTimestamp]
           if (!cacheData) {
@@ -316,6 +343,7 @@ export async function tvlStoreAllWaitingRecords(ws: any) {
   const allRecords = Object.entries(recordItems)
   // randomize the order of the records
   allRecords.sort(() => Math.random() - 0.5)
+  const updateProtocolSet = new Set<string>()
 
   const { errors } = await PromisePool
     .withConcurrency(11)
@@ -324,6 +352,7 @@ export async function tvlStoreAllWaitingRecords(ws: any) {
       // if (recordItems[id]) delete recordItems[id]  // sometimes users double click or the can trigger this multiple times
       const { storeFn } = record as any
       await storeFn()
+      updateProtocolSet.add(record.protocol.id)
       delete recordItems[id]
     })
 
@@ -333,6 +362,9 @@ export async function tvlStoreAllWaitingRecords(ws: any) {
   }
   console.log('all tvl records are stored');
   sendTvlStoreWaitingRecords(ws)
+
+  // Reset protocol cache for updated protocols
+  await queueProtocolCacheReset(Array.from(updateProtocolSet))
 }
 
 export function sendTvlStoreWaitingRecords(ws: any) {
@@ -495,10 +527,9 @@ async function _deleteTvlRecords(ws: any, ids?: any) {
   protocolIdList = [...new Set(protocolIdList)]
   for (const protocolId of protocolIdList) {
     try {
-      await clearProtocolCacheById(protocolId)
-      console.log('Cache cleared for protocol:', protocolId);
+      await queueProtocolCacheReset(protocolId)
     } catch (e) {
-      console.error('Error clearing cache for protocol:', protocolId, (e as any)?.message);
+      console.error('Error queuing cache reset for protocol:', protocolId, (e as any)?.message);
     }
   }
 
@@ -550,21 +581,29 @@ async function buildTokenSymbolMapping(params: {
   chains?: string[],
 }) {
   const { usdTvlRecords, rawRecords, symbolsToRemove, addressesToRemove, chains = [] } = params
-  const filterByChains =  chains.length > 0
+  const filterByChains = chains.length > 0
   const chainsSet = new Set(chains)
 
   const symbolsToRemoveSet: Set<string> = new Set(symbolsToRemove.map(s => s.toLowerCase()))
   const processedChainSymbols: Set<string> = new Set()
-  const chainSymbolMapping: any = {}
+  // chainSymbolMapping[chain][addr] = { symbol, decimals }; also chainSymbolMapping[chain][symbol] = `chain:addr`
+  const chainSymbolMapping: Record<string, Record<string, any>> = {}
+  const failedChains: Set<string> = new Set()
 
   for (const [sk, usdTokenRecord] of Object.entries(usdTvlRecords)) {
     const rawRecord = rawRecords[sk]
-    if (!rawRecord) continue;
+    if (!rawRecord) {
+      console.log('No raw record found for timestamp:', new Date(Number(sk) * 1000), 'skipping symbol mapping for this timestamp');
+      continue;
+    }
+
+    const recordRows: any[] = []
 
     for (const key of Object.keys(usdTokenRecord)) {
       if (['tvl', 'pool2', 'staking', 'SK'].includes(key) || key.includes('-')) continue;  // we are looking for chains
       const chain = key
       if (filterByChains && !chainsSet.has(chain)) continue;
+      if (failedChains.has(chain)) continue;
       const chainData = usdTokenRecord[chain]
       if (!chainSymbolMapping[chain]) chainSymbolMapping[chain] = {}
 
@@ -575,44 +614,71 @@ async function buildTokenSymbolMapping(params: {
         if (processedChainSymbols.has(chainSymbolKey)) continue;
 
         if (chainSymbolMapping[chain].hasOwnProperty(symbol)) {
-          console.log('Symbol mapping found for', chainSymbolKey, chainSymbolMapping[chain][symbol]);
-          addressesToRemove.add(chainSymbolMapping[chain][symbol]);
+          const fullAddr = chainSymbolMapping[chain][symbol]
+          addressesToRemove.add(fullAddr);
           processedChainSymbols.add(chainSymbolKey)
+          const bareAddr = fullAddr.startsWith(chain + ':') ? fullAddr.slice(chain.length + 1) : fullAddr
+          const info = chainSymbolMapping[chain][bareAddr] ?? {}
+          recordRows.push({ chain, symbol, address: fullAddr, resolvedSymbol: info.symbol ?? '', decimals: info.decimals ?? '', source: 'cached' })
           continue;
         }
 
-        let rawRecordTokens = Object.keys(rawRecord[chain]).map((addr) => {
+        let failedChainTokenSet = chainFailedCallsSets[chain]
+        let rawRecordTokens = Object.keys(rawRecord[chain] ?? {}).map((addr) => {
           if (chain === 'ethereum' && addr.startsWith('0x')) return addr.toLowerCase()
-
           if (addr.startsWith(chain + ':0x')) {
-
             addr = addr.slice(chain.length + 1).toLowerCase()
 
+            if (failedChainTokenSet && failedChainTokenSet.has(addr)) return false
             if (chainSymbolMapping[chain].hasOwnProperty(addr)) return false
+
             return addr
           }
           return false
-        }).filter(Boolean)
-
+        }).filter(Boolean) as string[]
 
         if (rawRecordTokens.length === 0) continue;
-        const symbols = await sdk.api2.abi.multiCall({ calls: rawRecordTokens as any, abi: 'erc20:symbol', chain, permitFailure: true })
+
+        let symbols: any[] | undefined
+        let decimalsList: any[] | undefined
+        try {
+          [symbols, decimalsList] = await Promise.all([
+            sdk.api2.abi.multiCall({ calls: rawRecordTokens as any, abi: 'erc20:symbol', chain, permitFailure: true, block: undefined }),
+            sdk.api2.abi.multiCall({ calls: rawRecordTokens as any, abi: 'erc20:decimals', chain, permitFailure: true, block: undefined }),
+          ])
+        } catch (e) {
+          console.error('Error fetching token symbols/decimals for chain:', chain, '- marking chain failed, will not retry', (e as any)?.message || e);
+          failedChains.add(chain)
+          if (!chainFailedCallsSets[chain]) chainFailedCallsSets[chain] = new Set()
+          rawRecordTokens.forEach((addr) => chainFailedCallsSets[chain].add(addr))
+          break;  // stop processing this chain for this record; outer loop also skips via failedChains
+        }
+        if (!symbols || symbols.length === 0) continue;
 
         rawRecordTokens.forEach((addr, idx) => {
-          let tokenSymbol = symbols[idx] as any
-          chainSymbolMapping[chain][addr as any] = tokenSymbol
+          let tokenSymbol = symbols![idx]
+          const rawDecimals = decimalsList?.[idx]
+          const decimals = typeof rawDecimals === 'string' ? Number(rawDecimals) : (typeof rawDecimals === 'number' ? rawDecimals : undefined)
+          chainSymbolMapping[chain][addr] = { symbol: tokenSymbol, decimals }
           if (typeof tokenSymbol === 'string') {
-            tokenSymbol = tokenSymbol.toLowerCase()
-            chainSymbolMapping[chain][tokenSymbol] = `${chain}:${addr}`.toLowerCase()
-            if (tokenSymbol === symbol) {
-              console.log('Symbol mapping found for', chainSymbolKey, addr);
-              addressesToRemove.add(chainSymbolMapping[chain][tokenSymbol])
+            const lowerSymbol = tokenSymbol.toLowerCase()
+            chainSymbolMapping[chain][lowerSymbol] = `${chain}:${addr}`.toLowerCase()
+            if (lowerSymbol === symbol) {
+              const fullAddr = chainSymbolMapping[chain][lowerSymbol]
+              addressesToRemove.add(fullAddr)
               processedChainSymbols.add(chainSymbolKey)
+              recordRows.push({ chain, symbol, address: fullAddr, resolvedSymbol: tokenSymbol, decimals: decimals ?? '', source: 'resolved' })
             }
           }
         })
       }
+    }
 
+    if (recordRows.length) {
+      console.log(`Symbol mapping resolved for sk=${sk} (${new Date(Number(sk) * 1000).toDateString()}):`)
+      console.table(recordRows)
     }
   }
+
+  return chainSymbolMapping
 }

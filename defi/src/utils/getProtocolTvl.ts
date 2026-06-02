@@ -2,7 +2,7 @@ import { _InternalProtocolMetadataMap, Protocol, protocolsById, } from "../proto
 import type { ITvlsWithChangesByChain, ProtocolTvls } from "../types";
 import { secondsInDay, secondsInMonth, secondsInWeek } from "./date";
 import { excludeProtocolInCharts, } from "./excludeProtocols";
-import { getLastRecord, hourlyTvl, hourlyUsdTokensTvl } from "./getLastRecord";
+import { getLastRecord, hourlyTvl, hourlyUsdTokensTvl, dailyUsdTokensTvl } from "./getLastRecord";
 import {
   extraSections,
   getChainDisplayName,
@@ -13,8 +13,8 @@ import {getRecordClosestToTimestamp} from "./shared/getRecordClosestToTimestamp"
 const _getLastHourlyRecord = (protocol: Protocol) => getLastRecord(hourlyTvl(protocol.id))
 const _getLastHourlyTokensUsd = (protocol: Protocol) => getLastRecord(hourlyUsdTokensTvl(protocol.id))
 const _getYesterdayTokensUsd = (protocol: Protocol) => getRecordClosestToTimestamp(hourlyUsdTokensTvl(protocol.id), Math.round(Date.now() / 1000) - secondsInDay, secondsInDay)
-const _getLastWeekTokensUsd = (protocol: Protocol) => getRecordClosestToTimestamp(hourlyUsdTokensTvl(protocol.id), Math.round(Date.now() / 1000) - secondsInWeek, secondsInDay)
-const _getLastMonthTokensUsd = (protocol: Protocol) => getRecordClosestToTimestamp(hourlyUsdTokensTvl(protocol.id), Math.round(Date.now() / 1000) - secondsInMonth, secondsInDay)
+const _getLastWeekTokensUsd = (protocol: Protocol) => getRecordClosestToTimestamp(hourlyUsdTokensTvl(protocol.id), Math.round(Date.now() / 1000) - secondsInWeek, secondsInDay).then((r: any) => r?.SK !== undefined ? r : getRecordClosestToTimestamp(dailyUsdTokensTvl(protocol.id), Math.round(Date.now() / 1000) - secondsInWeek, secondsInDay * 1.5))
+const _getLastMonthTokensUsd = (protocol: Protocol) => getRecordClosestToTimestamp(hourlyUsdTokensTvl(protocol.id), Math.round(Date.now() / 1000) - secondsInMonth, secondsInDay).then((r: any) => r?.SK !== undefined ? r : getRecordClosestToTimestamp(dailyUsdTokensTvl(protocol.id), Math.round(Date.now() / 1000) - secondsInMonth, secondsInDay * 1.5))
 const _getYesterdayTvl = (protocol: Protocol) => getRecordClosestToTimestamp(hourlyTvl(protocol.id), Math.round(Date.now() / 1000) - secondsInDay, secondsInDay)
 const _getLastWeekTvl = (protocol: Protocol) => getRecordClosestToTimestamp(hourlyTvl(protocol.id), Math.round(Date.now() / 1000) - secondsInWeek, secondsInDay)
 const _getLastMonthTvl = (protocol: Protocol) => getRecordClosestToTimestamp(hourlyTvl(protocol.id), Math.round(Date.now() / 1000) - secondsInMonth, secondsInDay)

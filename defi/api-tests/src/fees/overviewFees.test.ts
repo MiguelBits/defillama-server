@@ -9,6 +9,7 @@ import {
   expectFreshData,
 } from '../../utils/testHelpers';
 import { ApiResponse } from '../../utils/config/apiClient';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.FEES.BASE_URL);
 
@@ -25,6 +26,10 @@ describe('Fees API - Overview Fees', () => {
     overviewResponse = r1;
     chainResponse = r2;
   }, 30000);
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(overviewResponse);
+  });
 
   describe('All Fees Overview', () => {
     describe('Basic Response Validation', () => {

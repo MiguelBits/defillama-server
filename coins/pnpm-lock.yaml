@@ -27,8 +27,8 @@ importers:
         specifier: ^1.8.1
         version: 1.18.2
       '@defillama/sdk':
-        specifier: 5.0.214
-        version: 5.0.214(bufferutil@4.0.9)(typescript@5.9.3)(utf-8-validate@5.0.10)
+        specifier: 5.0.215
+        version: 5.0.215(bufferutil@4.0.9)(typescript@5.9.3)(utf-8-validate@5.0.10)
       '@elastic/elasticsearch':
         specifier: ^8.19.1
         version: 8.19.1
@@ -1068,8 +1068,8 @@ packages:
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
     engines: {node: '>=12'}
 
-  '@defillama/sdk@5.0.214':
-    resolution: {integrity: sha512-1oPxrdkNy3HYppV/J+3eTFa3v6F0XsWIHlkiKbk2X/Ek3PAs/8gWBg3n4dU2jm3sLEvKbpXhea9+uz1fbIP5zA==}
+  '@defillama/sdk@5.0.215':
+    resolution: {integrity: sha512-kC4wtGHZZfl3hEaqGlcNhIhB9KTrSn2qN/WJu+7qZjYUDYsxSVfho5t4MXS1hj7bvlL1JEHYc2W/oFpgG0dqzA==}
 
   '@effect/platform-node-shared@0.15.5':
     resolution: {integrity: sha512-PXFdIHMNzv19+aaKBo99KVsqJ65il8j7ejze/srkzOkNu4WK/GGpQuYF32NZLirFgXJe/4aYMRgwD+uJ4mCyuw==}
@@ -7874,7 +7874,7 @@ snapshots:
     dependencies:
       '@jridgewell/trace-mapping': 0.3.9
 
-  '@defillama/sdk@5.0.214(bufferutil@4.0.9)(typescript@5.9.3)(utf-8-validate@5.0.10)':
+  '@defillama/sdk@5.0.215(bufferutil@4.0.9)(typescript@5.9.3)(utf-8-validate@5.0.10)':
     dependencies:
       '@aws-sdk/client-s3': 3.913.0
       '@elastic/elasticsearch': 8.19.1

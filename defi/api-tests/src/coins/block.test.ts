@@ -9,6 +9,7 @@ import {
 } from '../../utils/testHelpers';
 import { validate } from '../../utils/validation';
 import { ApiResponse } from '../../utils/config/apiClient';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.COINS.BASE_URL);
 
@@ -22,6 +23,17 @@ describe('Coins API - Block', () => {
     'avalanche',
     'bsc',
   ];
+
+  let corsResponse: ApiResponse<BlockResponse>;
+  beforeAll(async () => {
+    corsResponse = await apiClient.get<BlockResponse>(
+      endpoints.COINS.BLOCK('ethereum', Math.floor(Date.now() / 1000) - 86400)
+    );
+  }, 30000);
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(corsResponse);
+  });
 
   // Test with different timestamps
   const testTimestamps = [

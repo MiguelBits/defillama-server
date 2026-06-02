@@ -343,6 +343,48 @@ export async function fetchCurrentPG(): Promise<any[]> {
     });
 }
 
+// Latest hourly row per id — used to append a live tip to the (daily-aligned)
+// per-id chart series so the rightmost point reflects the latest cron-tick,
+// not the start-of-day daily snapshot (which the closest-to-midnight gate
+// can pin to a broken early-morning value).
+export interface PerpsChartTipRow {
+    id: string;
+    timestamp: number;
+    open_interest: number;
+    volume_24h: number;
+    price: number;
+    price_change_24h: number;
+    funding_rate: number;
+    premium: number;
+    cumulative_funding: number;
+}
+export async function fetchLatestHourlyForChartTipsPG(): Promise<{ [id: string]: PerpsChartTipRow }> {
+    const rows = await HOURLY_RWA_PERPS_DATA.sequelize!.query(
+        `SELECT DISTINCT ON (id)
+            id, timestamp,
+            open_interest, volume_24h, price, price_change_24h,
+            funding_rate, premium, cumulative_funding
+         FROM "${HOURLY_RWA_PERPS_DATA.getTableName()}"
+         ORDER BY id, timestamp DESC`,
+        { type: QueryTypes.SELECT }
+    ) as any[];
+    const out: { [id: string]: PerpsChartTipRow } = {};
+    for (const r of rows) {
+        out[r.id] = {
+            id: r.id,
+            timestamp: Number(r.timestamp),
+            open_interest: Number(r.open_interest) || 0,
+            volume_24h: Number(r.volume_24h) || 0,
+            price: Number(r.price) || 0,
+            price_change_24h: Number(r.price_change_24h) || 0,
+            funding_rate: Number(r.funding_rate) || 0,
+            premium: Number(r.premium) || 0,
+            cumulative_funding: Number(r.cumulative_funding) || 0,
+        };
+    }
+    return out;
+}
+
 // Fetch all daily records, optionally filtered by updated_at timestamp
 export async function fetchAllDailyRecordsPG(updatedAfter?: Date): Promise<any[]> {
     const whereClause = updatedAfter

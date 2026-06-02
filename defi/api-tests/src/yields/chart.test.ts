@@ -10,6 +10,7 @@ import {
 } from '../../utils/testHelpers';
 import { validate } from '../../utils/validation';
 import { ApiResponse } from '../../utils/config/apiClient';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.YIELDS_PRO.BASE_URL);
 
@@ -17,6 +18,15 @@ describe('Yields Pro API - Chart', () => {
   const testPools = [
     '747c1d2a-c668-4682-b9f9-296708a3dd90', // Lido stETH
   ];
+
+  let corsResponse: ApiResponse<ChartResponse>;
+  beforeAll(async () => {
+    corsResponse = await apiClient.get<ChartResponse>(endpoints.YIELDS_PRO.CHART(testPools[0]));
+  }, 30000);
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(corsResponse);
+  });
 
   testPools.forEach((poolId) => {
     describe(`Pool: ${poolId}`, () => {

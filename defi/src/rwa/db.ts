@@ -4,7 +4,7 @@ import { DataTypes, Model, Op, QueryTypes, Sequelize } from 'sequelize'
 class META_RWA_DATA extends Model { }
 export class DAILY_RWA_DATA extends Model { }
 export class HOURLY_RWA_DATA extends Model { }
-class BACKUP_RWA_DATA extends Model { }
+export class BACKUP_RWA_DATA extends Model { }
 
 let pgConnection: any;
 
@@ -28,6 +28,9 @@ async function initPGTables() {
             type: DataTypes.TEXT,
         },
         activemcap: {
+            type: DataTypes.TEXT,
+        },
+        totalsupply: {
             type: DataTypes.TEXT,
         },
         aggregatedefiactivetvl: {
@@ -81,6 +84,9 @@ async function initPGTables() {
         activemcap: {
             type: DataTypes.TEXT,
         },
+        totalsupply: {
+            type: DataTypes.TEXT,
+        },
         aggregatedefiactivetvl: {
             type: DataTypes.DECIMAL,
         },
@@ -127,6 +133,9 @@ async function initPGTables() {
             type: DataTypes.TEXT,
         },
         activemcap: {
+            type: DataTypes.TEXT,
+        },
+        totalsupply: {
             type: DataTypes.TEXT,
         },
         aggregatedefiactivetvl: {
@@ -291,7 +300,7 @@ export async function storeHistoricalPG(inserts: any, timestamp: number): Promis
         };
     });
 
-    const updateOnDuplicate = ['defiactivetvl', 'mcap', 'activemcap', 'aggregatedefiactivetvl', 'aggregatemcap', 'aggregatedactivemcap', 'timestamp_actual', 'updated_at'];
+    const updateOnDuplicate = ['defiactivetvl', 'mcap', 'activemcap', 'totalsupply', 'aggregatedefiactivetvl', 'aggregatemcap', 'aggregatedactivemcap', 'timestamp_actual', 'updated_at'];
 
     // Bulk insert with conflict handling - overwrite on duplicate
     await DAILY_RWA_DATA.bulkCreate(dailyInserts, {
@@ -360,14 +369,14 @@ export async function fetchMetadataPG(): Promise<any[]> {
 }
 
 // Get one record per id with the largest timestamp
-export async function fetchCurrentPG(): Promise<{ id: string; timestamp: number; defiactivetvl: object; mcap: object; activemcap: object }[]> {
+export async function fetchCurrentPG(): Promise<{ id: string; timestamp: number; defiactivetvl: object; mcap: object; activemcap: object; totalsupply: object }[]> {
     const data = await HOURLY_RWA_DATA.sequelize!.query(
-        `SELECT DISTINCT ON (id) id, timestamp, defiactivetvl, mcap, activemcap
+        `SELECT DISTINCT ON (id) id, timestamp, defiactivetvl, mcap, activemcap, totalsupply
          FROM "${HOURLY_RWA_DATA.getTableName()}"
          ORDER BY id, timestamp DESC`,
         { type: QueryTypes.SELECT }
-    ) as { id: string; timestamp: number; defiactivetvl: string; mcap: string; activemcap: string }[];
-    const jsonFields = ['defiactivetvl', 'mcap', 'activemcap']
+    ) as { id: string; timestamp: number; defiactivetvl: string; mcap: string; activemcap: string; totalsupply: string }[];
+    const jsonFields = ['defiactivetvl', 'mcap', 'activemcap', 'totalsupply']
 
     return data.map((d: any) => {
         const copy: any = { ...d }
@@ -376,6 +385,72 @@ export async function fetchCurrentPG(): Promise<{ id: string; timestamp: number;
         })
         return copy
     }) as any
+}
+
+// Latest hourly row per id, with the aggregate columns needed to build a
+// live-tip chart point. Same DISTINCT-ON-(id)-DESC shape as fetchCurrentPG,
+// but also returns the pre-aggregated sums so the chart-build pass doesn't
+// have to re-sum the JSON columns.
+export interface ChartTipRow {
+    id: string;
+    timestamp: number;
+    mcap: { [chain: string]: any };
+    activemcap: { [chain: string]: any };
+    defiactivetvl: { [chain: string]: any };
+    totalsupply: { [chain: string]: any };
+    aggregatemcap: number;
+    aggregatedactivemcap: number;
+    aggregatedefiactivetvl: number;
+}
+export async function fetchLatestHourlyForChartTipsPG(): Promise<{ [id: string]: ChartTipRow }> {
+    const rows = await HOURLY_RWA_DATA.sequelize!.query(
+        `SELECT DISTINCT ON (id)
+            id, timestamp,
+            mcap, activemcap, defiactivetvl, totalsupply,
+            aggregatemcap, aggregatedactivemcap, aggregatedefiactivetvl
+         FROM "${HOURLY_RWA_DATA.getTableName()}"
+         ORDER BY id, timestamp DESC`,
+        { type: QueryTypes.SELECT }
+    ) as any[];
+    const out: { [id: string]: ChartTipRow } = {};
+    for (const r of rows) {
+        out[r.id] = {
+            id: r.id,
+            timestamp: Number(r.timestamp),
+            mcap: parseJsonSafe(r.mcap),
+            activemcap: parseJsonSafe(r.activemcap),
+            defiactivetvl: parseJsonSafe(r.defiactivetvl),
+            totalsupply: parseJsonSafe(r.totalsupply),
+            aggregatemcap: Number(r.aggregatemcap) || 0,
+            aggregatedactivemcap: Number(r.aggregatedactivemcap) || 0,
+            aggregatedefiactivetvl: Number(r.aggregatedefiactivetvl) || 0,
+        };
+    }
+    return out;
+}
+
+export async function fetchLatestRwaRowsForIds(ids: string[]): Promise<{ [id: string]: any }> {
+    const uniqueIds = [...new Set(ids.map((id) => String(id)).filter(Boolean))];
+    if (!uniqueIds.length) return {};
+
+    const rows = await HOURLY_RWA_DATA.sequelize!.query(
+        `SELECT DISTINCT ON (id)
+            id, timestamp, mcap, activemcap, aggregatedefiactivetvl, aggregatemcap, aggregatedactivemcap
+         FROM "${HOURLY_RWA_DATA.getTableName()}"
+         WHERE id IN (:ids)
+         ORDER BY id, timestamp DESC`,
+        { replacements: { ids: uniqueIds }, type: QueryTypes.SELECT }
+    ) as any[];
+
+    const byId: { [id: string]: any } = {};
+    for (const row of rows) {
+        byId[row.id] = {
+            ...row,
+            mcap: parseJsonSafe(row.mcap),
+            activemcap: parseJsonSafe(row.activemcap),
+        };
+    }
+    return byId;
 }
 // Fetch all daily records, optionally filtered by updated_at timestamp
 export async function fetchAllDailyRecordsPG(updatedAfter?: Date): Promise<any[]> {
@@ -433,6 +508,7 @@ function parseChainFields(record: any): any {
         mcap: parseJsonSafe(record.mcap),
         activemcap: parseJsonSafe(record.activemcap),
         defiactivetvl: parseJsonSafe(record.defiactivetvl),
+        totalsupply: parseJsonSafe(record.totalsupply),
     };
 }
 
@@ -443,7 +519,7 @@ export async function fetchDailyRecordsWithChainsPG(updatedAfter: Date): Promise
 
     while (true) {
         const batch = await DAILY_RWA_DATA.findAll({
-            attributes: ['id', 'timestamp', 'mcap', 'activemcap', 'defiactivetvl', 'updated_at'],
+            attributes: ['id', 'timestamp', 'mcap', 'activemcap', 'defiactivetvl', 'totalsupply', 'updated_at'],
             where: { updated_at: { [Op.gt]: updatedAfter } },
             order: [['id', 'ASC'], ['timestamp', 'ASC']],
             limit: PAGE_SIZE,
@@ -467,7 +543,7 @@ export async function fetchDailyRecordsWithChainsForIdPG(id: string): Promise<an
 
     while (true) {
         const batch = await DAILY_RWA_DATA.findAll({
-            attributes: ['timestamp', 'mcap', 'activemcap', 'defiactivetvl'],
+            attributes: ['timestamp', 'mcap', 'activemcap', 'defiactivetvl', 'totalsupply'],
             where: { id },
             order: [['timestamp', 'ASC']],
             limit: PAGE_SIZE,
@@ -482,6 +558,58 @@ export async function fetchDailyRecordsWithChainsForIdPG(id: string): Promise<an
     }
 
     return results;
+}
+
+export interface FlowRow { timestamp: number; mcap: { [chain: string]: any }; totalsupply: { [chain: string]: any }; }
+export interface FlowPoint {
+    timestamp: number;
+    netFlowUsd: number | null;
+    netFlowByChain: { [chainLabel: string]: number };
+    missingChains?: string[];
+}
+
+// netFlow_t per chain = (supply_t - supply_{t-1}) * (mcap_t / supply_t).
+// Chains missing supply on either side are skipped and listed in missingChains.
+// netFlowUsd is null only when nothing was computable (incl. the first row).
+export function computeFlowSeries(rows: FlowRow[], chainLabelFn: (slug: string) => string = (s) => s): FlowPoint[] {
+    if (rows.length === 0) return [];
+    const allChains = new Set<string>();
+    for (const row of rows) {
+        for (const c of Object.keys(row.totalsupply || {})) allChains.add(c);
+        for (const c of Object.keys(row.mcap || {})) allChains.add(c);
+    }
+
+    return rows.map((row, i): FlowPoint => {
+        if (i === 0) return { timestamp: row.timestamp, netFlowUsd: null, netFlowByChain: {} };
+        const prev = rows[i - 1];
+        const byChain: { [chain: string]: number } = {};
+        const missingChains: string[] = [];
+        let netFlowUsd = 0;
+        let anyComputed = false;
+        for (const chainKey of allChains) {
+            const prevHas = prev.totalsupply?.[chainKey] != null;
+            const curHas = row.totalsupply?.[chainKey] != null;
+            const mcapT = Number(row.mcap?.[chainKey]) || 0;
+            if (!prevHas || !curHas) {
+                const mcapPrev = Number(prev.mcap?.[chainKey]) || 0;
+                if (mcapT > 0 || mcapPrev > 0) missingChains.push(chainLabelFn(chainKey));
+                continue;
+            }
+            const supplyPrev = Number(prev.totalsupply[chainKey]) || 0;
+            const supplyT = Number(row.totalsupply[chainKey]) || 0;
+            const priceT = supplyT > 0 ? mcapT / supplyT : 0;
+            const flow = (supplyT - supplyPrev) * priceT;
+            if (flow !== 0) byChain[chainLabelFn(chainKey)] = flow;
+            netFlowUsd += flow;
+            anyComputed = true;
+        }
+        return {
+            timestamp: row.timestamp,
+            netFlowUsd: anyComputed ? netFlowUsd : null,
+            netFlowByChain: byChain,
+            ...(missingChains.length > 0 ? { missingChains } : {}),
+        };
+    });
 }
 
 // Fetch unique timestamps

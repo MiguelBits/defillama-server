@@ -10,6 +10,7 @@ import {
 } from '../../utils/testHelpers';
 import { ApiResponse } from '../../utils/config/apiClient';
 import { validate } from '../../utils/validation';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.PERPS.BASE_URL);
 
@@ -23,6 +24,10 @@ describe('Perps API - Open Interest', () => {
   }, 60000);
 
   describe('Basic Response Validation', () => {
+    it('should expose CORS headers', () => {
+      expectCorsHeaders(openInterestResponse);
+    });
+
     it('should return successful response with valid structure', () => {
       expectSuccessfulResponse(openInterestResponse);
       expect(isOpenInterestResponse(openInterestResponse.data)).toBe(true);

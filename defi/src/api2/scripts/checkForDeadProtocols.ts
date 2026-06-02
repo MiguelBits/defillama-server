@@ -89,10 +89,11 @@ async function run() {
     'MovePosition',
     'DAOLama',
     'RealT RMM Marketplace V2',
-    'quantus', // marked as rug pull, latest tvl data was before marked insolvent
-    'starlay', // latest astar tvl data was before marked insolvent
-    'fira', // backed by bUSD0 in 0xa428723eE8ffD87088C36121d72100B43F11fb6A (UZR lending market), but it is excluded from tvl to prevent doublecount with USD0
-    'milk-finance', // backed by unpriced MILK tokens that are intentionally excluded as it is the team's own token: 0x6E0090dBecF3b4F0F9429637756CaDD8Fc468C54
+    'Quantus Lend', // marked as rug pull, latest tvl data was before marked insolvent
+    'Starlay Finance', // latest astar tvl data was before marked insolvent
+    'Fira', // backed by bUSD0 in 0xa428723eE8ffD87088C36121d72100B43F11fb6A (UZR lending market), but it is excluded from tvl to prevent doublecount with USD0
+    'Milk Finance', // backed by unpriced MILK tokens that are intentionally excluded as it is the team's own token: 0x6E0090dBecF3b4F0F9429637756CaDD8Fc468C54
+    'Credit', // the protocol allows undercollateralized lending
   ])
   const filteredHighBorrowedProtocols = verHighBorrowedProtocols.filter((i: any) => {
     return i.borrowedOrig  > 200_000 && !i.isMarkedDead && i.borrowedDiff > 5 && i.category === 'Lending' && !whitelistedSet.has(i.name)

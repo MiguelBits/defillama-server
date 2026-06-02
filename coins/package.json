@@ -52,7 +52,7 @@
     "@aws-sdk/client-s3": "^3.354.0",
     "@aws-sdk/lib-dynamodb": "^3.918.0",
     "@clickhouse/client": "^1.8.1",
-    "@defillama/sdk": "5.0.214",
+    "@defillama/sdk": "5.0.215",
     "@elastic/elasticsearch": "^8.19.1",
     "@ethersproject/bignumber": "^5.5.0",
     "@project-serum/anchor": "^0.26.0",

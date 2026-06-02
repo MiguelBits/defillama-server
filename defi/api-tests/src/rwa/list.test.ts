@@ -8,6 +8,7 @@ import {
   expectNonEmptyArray,
 } from '../../utils/testHelpers';
 import { validate } from '../../utils/validation';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.RWA.BASE_URL);
 
@@ -19,6 +20,10 @@ describe('RWA API - List', () => {
   });
 
   describe('Basic Response Validation', () => {
+    it('should expose CORS headers', () => {
+      expectCorsHeaders(response);
+    });
+
     it('should return successful response with valid structure', () => {
       expectSuccessfulResponse(response);
       expectObjectResponse(response);

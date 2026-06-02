@@ -16,13 +16,19 @@ interface IChainGroups {
   };
 }
 
+type FormattedChainsData = ReturnType<typeof getFormattedChains>;
+type FormattedChainsTableData = Omit<FormattedChainsData, "stackedDataset" | "tvlTypes">;
+
 interface INumOfProtocolsPerChain {
   [protocol: string]: number;
 }
 
-export const getPercentChange = (valueNow: string, value24HoursAgo: string) => {
-  const adjustedPercentChange =
-    ((parseFloat(valueNow) - parseFloat(value24HoursAgo)) / parseFloat(value24HoursAgo)) * 100;
+export const getPercentChange = (valueNow: number | string | null, value24HoursAgo: number | string | null) => {
+  if (valueNow == null || value24HoursAgo == null) return null;
+
+  const currentValue = Number(valueNow);
+  const previousValue = Number(value24HoursAgo);
+  const adjustedPercentChange = ((currentValue - previousValue) / previousValue) * 100;
   if (isNaN(adjustedPercentChange) || !isFinite(adjustedPercentChange)) {
     return null;
   }
@@ -100,11 +106,13 @@ async function _genFormattedChains() {
   // generate route files
   const allData = getFormattedChains('All')
   await storeRouteData('/chains2/All', allData)
+  await storeRouteData('/chains2/All/table', getFormattedChainsTableData(allData))
 
   for (const category of ['All', 'Non-EVM',].concat(allCategories)) {
     try {
       const categoryData = getFormattedChains(category)
       await storeRouteData('/chains2/' + category, categoryData)
+      await storeRouteData('/chains2/' + category + '/table', getFormattedChainsTableData(categoryData))
     } catch (e: any) {
       console.error('Issue generating category data', category, e?.message ? e.message : e)
     }
@@ -265,3 +273,11 @@ const getFormattedChains = (category: string) => {
     tvlTypes, // Object.fromEntries(Object.entries(tvlTypes).map(t=>[t[1], t[0]])) // reverse object
   };
 };
+
+function getFormattedChainsTableData({
+  stackedDataset: _stackedDataset,
+  tvlTypes: _tvlTypes,
+  ...tableData
+}: FormattedChainsData): FormattedChainsTableData {
+  return tableData;
+}

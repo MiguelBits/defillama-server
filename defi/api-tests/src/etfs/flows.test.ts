@@ -7,6 +7,7 @@ import {
   expectValidNumber,
 } from '../../utils/testHelpers';
 import { ApiResponse } from '../../utils/config/apiClient';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.ETFS.BASE_URL);
 
@@ -18,6 +19,10 @@ describe('ETFs API - Flows', () => {
   }, 30000);
 
   describe('Basic Response Validation', () => {
+    it('should expose CORS headers', () => {
+      expectCorsHeaders(flowsResponse);
+    });
+
     it('should return successful response with valid structure', () => {
       expectSuccessfulResponse(flowsResponse);
       expect(isETFFlowsResponse(flowsResponse.data)).toBe(true);

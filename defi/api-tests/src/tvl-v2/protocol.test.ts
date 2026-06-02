@@ -12,6 +12,7 @@ import {
 } from '../../utils/testHelpers';
 import { validate } from '../../utils/validation';
 import { ApiResponse } from '../../utils/config/apiClient';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.TVL_V2.BASE_URL);
 const TVL_V2_ENDPOINTS = endpoints.TVL_V2;
@@ -29,6 +30,10 @@ describe('TVL V2 API - Metrics Protocol Overview', () => {
       })
     );
   }, 60000);
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(responses[testProtocols[0]]);
+  });
 
   describe('Basic Response Validation', () => {
     testProtocols.forEach((protocolSlug) => {

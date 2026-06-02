@@ -11,6 +11,7 @@ import {
   Tag,
   Space,
   Collapse,
+  Alert,
 } from 'antd';
 import { PlayCircleOutlined, ClearOutlined, MoonOutlined, SaveOutlined, LineChartOutlined, DeleteOutlined, ApiOutlined, LockOutlined, EyeInvisibleOutlined, EyeOutlined, ExclamationCircleOutlined, CheckOutlined, CloseOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -51,6 +52,7 @@ const App = () => {
   const [dimensionRefillForm] = Form.useForm();
   const dimRefillOnlyMissing = Form.useWatch('onlyMissing', dimensionRefillForm);
   const dimRefillDelayEnabled = Form.useWatch('delayEnabled', dimensionRefillForm);
+  const dimRefillLoadFromCsv = Form.useWatch('loadFromCsv', dimensionRefillForm);
 
   const [adapterTypes, setAdapterTypes] = useState([]);
   const [dimensionRefillProtocols, setDimensionRefillProtocols] = useState([]);
@@ -456,18 +458,22 @@ const App = () => {
         return;
       }
 
+      const loadFromCsv = values.loadFromCsv || false;
       const payload = {
         type: 'dimensions-refill-runCommand',
         data: {
           adapterType: values.adapterType,
           protocol: values.protocol,
-          dateFrom: Math.floor(values.dateRange[0].valueOf() / 1000),
-          dateTo: Math.floor(values.dateRange[1].valueOf() / 1000),
+          // date range is not needed in CSV mode - dates come from the CSV itself
+          dateFrom: loadFromCsv || !values.dateRange ? undefined : Math.floor(values.dateRange[0].valueOf() / 1000),
+          dateTo: loadFromCsv || !values.dateRange ? undefined : Math.floor(values.dateRange[1].valueOf() / 1000),
           onlyMissing: values.onlyMissing || false,
           parallelCount: values.parallelCount,
           delayBetweenRuns: values.delayEnabled ? values.delayBetweenRuns ?? 0 : 0,
           skipHourlyCache: values.skipHourlyCache || false,
           parallelHourlyProcessCount: values.parallelHourlyProcessCount || 1,
+          loadFromCsv,
+          csvText: loadFromCsv ? values.csvText : undefined,
           // dryRun: values.dryRun || false,
           // checkBeforeInsert: values.checkBeforeInsert || false,
           dryRun: false,
@@ -557,11 +563,11 @@ const App = () => {
         <Form.Item
           label="Date Range"
           name="dateRange"
-          style={{ display: (dimRefillOnlyMissing && !dimDeleteAction) ? 'none' : 'block' }}
+          style={{ display: ((dimRefillOnlyMissing || dimRefillLoadFromCsv) && !dimDeleteAction) ? 'none' : 'block' }}
           rules={[
             ({ getFieldValue }) => ({
               validator(_, value) {
-                if (getFieldValue('onlyMissing') || (value && value.length === 2)) {
+                if (getFieldValue('onlyMissing') || getFieldValue('loadFromCsv') || (value && value.length === 2)) {
                   return Promise.resolve();
                 }
                 return Promise.reject(new Error('Please select a valid date range'));
@@ -573,6 +579,69 @@ const App = () => {
         </Form.Item>
 
         {!dimDeleteAction && <>
+        <Form.Item
+          label="Load from CSV"
+          name="loadFromCsv"
+          valuePropName="checked"
+          help="Build records from a pasted CSV instead of running the adapter's fetch functions"
+        >
+          <Switch checkedChildren="CSV" unCheckedChildren="Fetch" />
+        </Form.Item>
+
+        <Form.Item
+          label="CSV Data"
+          name="csvText"
+          style={{ display: dimRefillLoadFromCsv ? 'block' : 'none' }}
+          help="Columns: a date column (date/timestamp/day) + dimension columns (long e.g. dailyVolume, or short e.g. dv). Optional 'chain' column - multiple rows per date are aggregated per chain. No chain column => protocol's first chain."
+          rules={[
+            ({ getFieldValue }) => ({
+              validator(_, value) {
+                if (!getFieldValue('loadFromCsv') || (value && value.trim().length)) {
+                  return Promise.resolve();
+                }
+                return Promise.reject(new Error('Please paste CSV data'));
+              },
+            }),
+          ]}
+        >
+          <Input.TextArea
+            rows={8}
+            placeholder={'date,chain,dailyVolume,dailyFees\n2024-01-01,ethereum,500000,2500\n2024-01-01,arbitrum,300000,1500\n2024-01-02,ethereum,520000,2600'}
+          />
+        </Form.Item>
+
+        {dimRefillLoadFromCsv && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16, borderRadius: 8 }}
+            message={<Text strong>Before saving CSV records</Text>}
+            description={
+              <Space direction="vertical" size={10} style={{ width: '100%', marginTop: 4 }}>
+                <div>
+                  <Tag color="blue" style={{ marginInlineEnd: 6 }}>Chains</Tag>
+                  Add a <b>chain</b> column when the protocol runs on multiple chains. Without it, every value is
+                  attributed to the protocol's first chain.
+                </div>
+                <div>
+                  <Tag color="red" style={{ marginInlineEnd: 6 }}>Overwrite</Tag>
+                  Saving <b>replaces the whole record</b>, so include <b>every dimension the adapter normally
+                  returns</b> (e.g. fees: <code>dailyFees</code>, <code>dailyRevenue</code>, …). Any dimension
+                  missing from the CSV is dropped. The run output lists the other dimensions this adapter type
+                  supports.
+                </div>
+                <div>
+                  <Tag color="gold" style={{ marginInlineEnd: 6 }}>Raw USD only</Tag>
+                  Values are stored as <b>raw USD numbers</b>. Token-breakdown adapters are <b>not yet
+                  supported</b> only aggregated USD values per chain are saved.
+                </div>
+              </Space>
+            }
+          />
+        )}
+        </>}
+
+        {!dimDeleteAction && !dimRefillLoadFromCsv && <>
         <Form.Item
           label="Parallel Count"
           name="parallelCount"
@@ -1684,6 +1753,37 @@ const App = () => {
     setSpikesSelectedRowKeys([]);
   }
 
+  function refillSpike(record) {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    const start = record.event?.startTimestamp;
+    if (!start) return;
+    const end = record.event?.endTimestamp || start;
+    wsRef.current.send(JSON.stringify({
+      type: 'tvl-runCommand',
+      data: {
+        action: 'refill',
+        protocolName: record.protocolName,
+        dateFrom: start - 86400,
+        dateTo: end,
+        parallelCount: 1,
+        maxRetries: 3,
+        chains: record.event?.chain || '',
+        skipBlockFetch: false,
+        breakIfTvlIsZero: false,
+        removeTokenTvl: false,
+        removeTokenTvlSymbols: '',
+        skipMissingChains: false,
+      },
+    }));
+  }
+
+  function bulkRefillSpikes() {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    const selectedRecords = spikesData.filter(r => spikesSelectedRowKeys.includes(r._id));
+    for (const r of selectedRecords) refillSpike(r);
+    setSpikesSelectedRowKeys([]);
+  }
+
   function fmtNum(n) {
     if (n == null || isNaN(n)) return '-';
     const sign = n < 0 ? '-' : '';
@@ -2096,6 +2196,9 @@ const App = () => {
             </Button>
             <Button size="small" onClick={() => bulkUpdateSpikes({ resolved: false })}>
               Mark Unresolved
+            </Button>
+            <Button size="small" type="primary" icon={<ReloadOutlined />} onClick={bulkRefillSpikes}>
+              Refill
             </Button>
             <Button size="small" danger onClick={() => setSpikesSelectedRowKeys([])}>
               Clear Selection

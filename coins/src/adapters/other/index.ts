@@ -538,19 +538,31 @@ async function karakWrapped(timestamp: number = 0, writes: Write[] = []) {
 async function matrixdock(timestamp: number = 0, writes: Write[] = []) {
   const chain = 'ethereum'
   const api = await getApi(chain, timestamp)
-  // get gold price from chainlink oracle
-  const price = (await api.call({ abi: 'uint256:latestAnswer', target: '0x214eD9Da11D2fbe465a6fc601a91E62EbEc1a0D6' })) / 1e8
+  const [rawGoldPrice, rawSilverPrice, rawXagmOzPerToken] = await Promise.all([
+    api.call({ abi: 'uint256:latestAnswer', target: '0x214eD9Da11D2fbe465a6fc601a91E62EbEc1a0D6' }),
+    api.call({ abi: 'uint256:latestAnswer', target: '0x379589227b15F1a12195D3f2d90bBc9F31f95235', permitFailure: true }),
+    api.call({ abi: 'uint256:ozPerToken', target: '0x123ffe0a3C62878dcbee2742227dc8990058d9E1', permitFailure: true }),
+  ])
   const TROY_OUNCE_CONVERSION = 1.097142857;
-  const goldPriceInTroyOunces = price * TROY_OUNCE_CONVERSION;
-  const ethereumPricesObject = {
-    '0x2103E845C5E135493Bb6c2A4f0B8651956eA8682': { price: goldPriceInTroyOunces, }
+  const goldPrice = rawGoldPrice / 1e8;
+  const goldPriceInTroyOunces = goldPrice * TROY_OUNCE_CONVERSION;
+  const ethereumPricesObject: any = {
+    '0x2103E845C5E135493Bb6c2A4f0B8651956eA8682': { price: goldPriceInTroyOunces, },
   }
   const bscPricesObject = {
     '0x23AE4fd8E7844cdBc97775496eBd0E8248656028': { price: goldPriceInTroyOunces, }
   }
+  const suiPricesObject: any = {}
+  if (rawSilverPrice && rawXagmOzPerToken) {
+    const xagmPrice = rawSilverPrice / 1e8 * rawXagmOzPerToken / 1e9;
+    ethereumPricesObject['0x123ffe0a3C62878dcbee2742227dc8990058d9E1'] = { price: xagmPrice, }
+    suiPricesObject['0x64bddec0f898ccaa022b8a6e0a5f75d80f53177b87a9795dd15aefe9ac12ee6c::xagm::XAGM'] = { price: xagmPrice, symbol: 'XAGM', decimals: 9, }
+  }
 
   await getWrites({ chain, timestamp, pricesObject: ethereumPricesObject, projectName: "other", writes, })
-  return getWrites({ chain: 'bsc', timestamp, pricesObject: bscPricesObject, projectName: "other", writes, })
+  await getWrites({ chain: 'bsc', timestamp, pricesObject: bscPricesObject, projectName: "other", writes, })
+  if (!Object.keys(suiPricesObject).length) return writes;
+  return getWrites({ chain: 'sui', timestamp, pricesObject: suiPricesObject, projectName: "other", writes, })
 }
 
 

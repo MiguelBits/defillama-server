@@ -9,9 +9,11 @@ import {
   expectValidNumber,
   expectNonNegativeNumber,
   expectValidTimestamp,
+  expectFreshData,
 } from '../../utils/testHelpers';
 import { validate } from '../../utils/validation';
 import { ApiResponse } from '../../utils/config/apiClient';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.TVL.BASE_URL);
 const TVL_ENDPOINTS = endpoints.TVL;
@@ -25,6 +27,10 @@ describe('TVL API - Historical Chain TVL (All Chains)', () => {
   });
 
   describe('Basic Response Validation', () => {
+    it('should expose CORS headers', () => {
+      expectCorsHeaders(allChainsResponse);
+    });
+
     it('should return successful response with valid structure', () => {
       expectSuccessfulResponse(allChainsResponse);
       expectArrayResponse(allChainsResponse);
@@ -67,6 +73,11 @@ describe('TVL API - Historical Chain TVL (All Chains)', () => {
         expect(point.tvl).toBeLessThan(10_000_000_000_000); // Max reasonable TVL
       });
     });
+
+    it('should have a fresh latest datapoint (within 1 day)', () => {
+      const timestamps = allChainsResponse.data.map((p) => p.date);
+      expectFreshData(timestamps, 86400);
+    });
   });
 
   describe('Edge Cases', () => {
@@ -96,6 +107,10 @@ describe('TVL API - Historical Chain TVL (Specific Chain)', () => {
       })
     );
   }, 60000);
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(chainResponses[testChains[0]]);
+  });
 
   describe('Basic Response Validation', () => {
     testChains.forEach((chain) => {
@@ -162,6 +177,12 @@ describe('TVL API - Historical Chain TVL (Specific Chain)', () => {
             expect(firstDate).toBeGreaterThan(1262304000); // After Jan 1, 2010
             expect(lastDate).toBeLessThan(Date.now() / 1000); // Not in future
           }
+        });
+
+        it('should have a fresh latest datapoint (within 1 day)', () => {
+          const response = chainResponses[chain];
+          if (response.data.length === 0) return;
+          expectFreshData(response.data.map((p) => p.date), 86400);
         });
       });
     });

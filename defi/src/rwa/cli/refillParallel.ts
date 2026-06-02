@@ -11,8 +11,9 @@
 import fs from "fs";
 import path from "path";
 import https from "https";
+import crypto from "crypto";
 
-import * as sdk from '@defillama/sdk'
+import * as sdk from "@defillama/sdk";
 const { runInPromisePool } = sdk.util;
 import { prepareAtvlContext, runAtvlForTimestamp } from "../atvlRefill";
 import { getTimestampAtStartOfDay } from "../../utils/date";
@@ -21,14 +22,25 @@ import { getChainIdFromDisplayName } from "../../utils/normalizeChain";
 import { Op, QueryTypes } from "sequelize";
 
 // ── Configuration ────────────────────────────────────────────────────
+// Step 2 (LIVE WRITE): delete the bad mcap=0 row at 2025-08-31 from
+// daily_rwa_data so the next cron tick re-inserts a correct value (using the
+// coin price freshly filled in step 1). Phase 2's spike detector will catch
+// 2025-08-31 (ratio of $0 to ~$962M neighbors = 0 < SPIKE_RATIO_LOW=0.1) and
+// DELETE the row from daily_rwa_data + backup_rwa_data.
+//
+// What writes with DRY_RUN=false:
+//   - Phase 1: nothing (runAtvlForTimestamp called without storeResults)
+//   - Phase 2: DELETE rows flagged as spikes (the $0 row at Aug 31)
+//   - Phase 3: UPDATE rows where mcap < expected × 0.7 (price-dip recovery)
+// Both Phase 2/3 scoped to id=644 only.
 const DRY_RUN = false;
-const START_DATE = "2025-09-01";
-const END_DATE = "2026-04-14";
+const START_DATE = "2024-01-01";
+const END_DATE = "2026-05-12";
 const BACKFILL_CONCURRENCY = 5;
 const ID_CONCURRENCY = 10;
 const PRICE_FETCH_CONCURRENCY = 8;
-// Private Equity & Venture asset group IDs
-const IDS = [ "2999",
+const IDS = [
+  "133",
 ];
 
 // Early-stop: if an ID has 0 data for this many consecutive days (going backwards), skip it
@@ -44,6 +56,36 @@ const MAX_SPIKE_RUN = 5;
 
 // Price-failure dip threshold
 const DIP_RATIO = 0.7;
+
+// ── Per-stage disk cache ──────────────────────────────────────────────
+// Each long-running stage writes its output to disk so a later-stage failure
+// (e.g. coins API timing out mid-Phase-3) doesn't force a full re-run.
+// Cache invalidates automatically when IDS / dates / DRY_RUN change.
+// Pass --reset-cache to wipe and start fresh.
+const CACHE_RESET = process.argv.includes("--reset-cache");
+const CACHE_ROOT = "/tmp/refill-cache";
+const CACHE_KEY = crypto.createHash("sha256").update(JSON.stringify({
+  script: "refillParallel",
+  IDS, START_DATE, END_DATE, DRY_RUN,
+})).digest("hex").slice(0, 12);
+const CACHE_DIR = path.join(CACHE_ROOT, CACHE_KEY);
+
+function cachePath(name: string): string { return path.join(CACHE_DIR, `${name}.json`); }
+function loadCache<T>(name: string): T | null {
+  if (CACHE_RESET) return null;
+  const p = cachePath(name);
+  if (!fs.existsSync(p)) return null;
+  try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return null; }
+}
+function saveCache(name: string, data: any): void {
+  fs.mkdirSync(CACHE_DIR, { recursive: true });
+  fs.writeFileSync(cachePath(name), JSON.stringify(data));
+}
+function resetCache(): void {
+  if (!fs.existsSync(CACHE_DIR)) return;
+  for (const f of fs.readdirSync(CACHE_DIR)) fs.unlinkSync(path.join(CACHE_DIR, f));
+}
+if (CACHE_RESET) { resetCache(); console.log(`[cache] reset ${CACHE_DIR}`); }
 
 // ── Helpers ──────────────────────────────────────────────────────────
 function parseJson(v: any): Record<string, number> {
@@ -82,7 +124,9 @@ interface PriceChart { prices: PricePoint[]; decimals?: number; symbol?: string 
 async function fetchPriceChart(
   coinKey: string, startTs: number, span: number,
 ): Promise<PriceChart | null> {
-  const url = `https://coins.llama.fi/chart/${encodeURIComponent(coinKey)}?start=${startTs}&span=${span}&period=1d&searchWidth=5d`;
+  const internalKey = process.env.INTERNAL_API_KEY;
+  if (!internalKey) throw new Error("INTERNAL_API_KEY is not set — refillParallel requires the pro coins API");
+  const url = `https://pro-api.llama.fi/${internalKey}/coins/chart/${encodeURIComponent(coinKey)}?start=${startTs}&span=${span}&period=1d&searchWidth=5d`;
   try {
     const resp = await fetchJson(url);
     const entry = resp?.coins?.[coinKey];
@@ -145,8 +189,16 @@ async function runBackfill(
   startDate: string,
   endDate: string,
   ids: string[],
-  collectResults: boolean,
 ): Promise<any[]> {
+  // Phase 1 cache — always cache regardless of collectResults, so a commit-mode
+  // run that fails in Phase 3 can skip Phase 1's ~70-min atvl work on retry.
+  // Cache invalidates on IDS / dates / DRY_RUN change (different CACHE_KEY).
+  const cached = loadCache<any[]>("phase1");
+  if (cached && cached.length > 0) {
+    console.log(`\n── Phase 1: SKIPPED — loaded ${cached.length} cached rows from ${cachePath("phase1")} (pass --reset-cache to redo)`);
+    return cached;
+  }
+
   const start = Math.floor(new Date(startDate).getTime() / 1000);
   const end = Math.floor(new Date(endDate).getTime() / 1000);
   process.env.RWA_REFILL_INCLUSIVE = "true";
@@ -206,7 +258,7 @@ async function runBackfill(
             }
           }
 
-          if (collectResults && result) {
+          if (result) {
             collected.push(...convertAtvlResult(timestamp, result, activeIds));
           }
         } catch (e) {
@@ -228,9 +280,17 @@ async function runBackfill(
       console.log(`  Pruned ${newlyPruned.length} IDs with ${ZERO_STREAK_CUTOFF}+ consecutive zero days: ${newlyPruned.join(", ")}`);
       activeIds = activeIds.filter((id) => !prunedIds.has(id));
     }
+
+    // Checkpoint after each chunk — if a later chunk fails, we don't lose
+    // earlier work. Always cache so commit-mode reruns also benefit.
+    if (collected.length > 0) saveCache("phase1", collected);
   }
 
   console.log(`  Backfill done. Errors: ${totalErrors.length}/${allTimestamps.length}, pruned: ${prunedIds.size}/${ids.length} IDs`);
+  if (collected.length > 0) {
+    saveCache("phase1", collected);
+    console.log(`  [cache] Phase 1 → ${cachePath("phase1")} (${collected.length} rows)`);
+  }
   return collected;
 }
 
@@ -497,7 +557,16 @@ async function processOneId(
     const lastTs = Number(rowsAfterSpikes[rowsAfterSpikes.length - 1].timestamp);
     const spanDays = Math.ceil((lastTs - firstTs) / 86400) + 1;
 
-    const priceByChainTs = await fetchAllPriceCharts(contracts, firstTs, spanDays);
+    // Per-asset price-chart cache so a coins API failure on asset N doesn't
+    // force re-fetching prices for assets 1..N-1 on the next run.
+    const priceCacheKey = `prices-${id}-${firstTs}-${lastTs}`;
+    let priceByChainTs = loadCache<Record<string, Record<number, { price: number; decimals: number }>>>(priceCacheKey);
+    if (priceByChainTs) {
+      console.log(`  [${id}] [cache] loaded price chart from ${cachePath(priceCacheKey)}`);
+    } else {
+      priceByChainTs = await fetchAllPriceCharts(contracts, firstTs, spanDays);
+      if (Object.keys(priceByChainTs).length > 0) saveCache(priceCacheKey, priceByChainTs);
+    }
     const result = applyPriceFixes(rowsAfterSpikes, priceByChainTs);
     fixedRows = result.fixedRows;
     fixCount = result.fixCount;
@@ -653,6 +722,64 @@ function generateHtml(results: IdResult[]): string {
 </html>`;
 }
 
+// ── Pre-flight ───────────────────────────────────────────────────────
+// SDK supply adapters that THROW on a historical timestamp. atvlRefill's
+// getTotalSupplies catches the throw silently, so any chain in this set has
+// its entire mcap leg dropped from historical refills. RWAs with contracts
+// on these chains MUST be backfilled separately (using a Dune-supply CSV +
+// the per-chain backfill script) before or after refillParallel runs.
+//
+// Source: defi/l2/utils.ts — each entry that calls `if (timestamp) throw ...`.
+const HISTORICAL_INCOMPATIBLE_CHAINS = new Set([
+  "stellar", "aptos", "solana", "sui", "starknet", "osmosis", "provenance",
+]);
+const CHAIN_TO_BACKFILL_SCRIPT: Record<string, string> = {
+  stellar: "defi/src/rwa/cli/backfillStellarRwaMcap.ts",
+  solana: "defi/src/rwa/cli/backfillSolanaRwaMcap.ts",
+};
+
+export async function preflightHistoricalIncompatibleChains(ids: string[]): Promise<void> {
+  const context = await prepareAtvlContext(ids);
+  interface Hit { id: string; ticker: string; chains: string[] }
+  const hits: Hit[] = [];
+  for (const id of ids) {
+    const entry = (context.finalData as any)[id];
+    if (!entry?.contracts) continue;
+    const incompatible: string[] = [];
+    for (const chainRaw of Object.keys(entry.contracts)) {
+      const chain = String(chainRaw).toLowerCase();
+      if (HISTORICAL_INCOMPATIBLE_CHAINS.has(chain) && !incompatible.includes(chain)) {
+        incompatible.push(chain);
+      }
+    }
+    if (incompatible.length > 0) {
+      hits.push({ id, ticker: entry.ticker ?? entry.name ?? "(unnamed)", chains: incompatible });
+    }
+  }
+  if (hits.length === 0) {
+    console.log(`  Pre-flight: ✓ no historical-incompatible chains in selected IDs`);
+    return;
+  }
+  console.log("");
+  console.log("  ⚠️  Pre-flight WARNING — assets with throw-on-historical chains");
+  console.log("  These chains will be SILENTLY DROPPED from historical refills by");
+  console.log("  atvlRefill's getTotalSupplies catch. The affected mcap leg becomes $0,");
+  console.log("  which can cause large step-downs / step-ups when the daily cron later");
+  console.log("  fetches the live 'now' supply (see BENJI/BRZ jump on 2026-05-22).");
+  console.log("");
+  for (const h of hits) {
+    const scripts = h.chains
+      .map((c) => CHAIN_TO_BACKFILL_SCRIPT[c] ?? `(no backfill script for ${c})`)
+      .join(" + ");
+    console.log(`    • ${h.ticker.padEnd(12)} (id=${h.id})  chains: [${h.chains.join(", ")}]`);
+    console.log(`        run first: ${scripts}`);
+  }
+  console.log("");
+  console.log(`  This warning is informational — refillParallel will continue.`);
+  console.log(`  Use a per-chain backfill script BEFORE or AFTER this run to fill the gap.`);
+  console.log("");
+}
+
 // ── Main ─────────────────────────────────────────────────────────────
 async function main() {
   const t0 = Date.now();
@@ -666,9 +793,11 @@ async function main() {
   console.log(`  Concurrency: backfill=${BACKFILL_CONCURRENCY}, ids=${ID_CONCURRENCY}, priceFetch=${PRICE_FETCH_CONCURRENCY}`);
   console.log(`${"=".repeat(60)}`);
 
+  await preflightHistoricalIncompatibleChains(IDS);
+
   // Phase 1: Backfill
   process.env.RWA_DRY_RUN = "false";
-  const collectedRows = await runBackfill(START_DATE, END_DATE, IDS, DRY_RUN);
+  const collectedRows = await runBackfill(START_DATE, END_DATE, IDS);
 
   // Group collected rows by ID (only used in DRY_RUN)
   const collectedById = new Map<string, any[]>();
@@ -722,5 +851,7 @@ async function main() {
   process.exit();
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
-// ts-node defi/src/rwa/cli/refillCleanParallel.ts
+if (require.main === module) {
+  main().catch((e) => { console.error(e); process.exit(1); });
+}
+// caffeinate -i ts-node defi/src/rwa/cli/refillParallel.ts

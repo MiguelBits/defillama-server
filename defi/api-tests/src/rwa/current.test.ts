@@ -8,6 +8,7 @@ import {
   expectNonEmptyString,
 } from '../../utils/testHelpers';
 import { validate } from '../../utils/validation';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.RWA.BASE_URL);
 
@@ -19,6 +20,10 @@ describe('RWA API - Current', () => {
   });
 
   describe('Basic Response Validation', () => {
+    it('should expose CORS headers', () => {
+      expectCorsHeaders(response);
+    });
+
     it('should return successful response with valid structure', () => {
       expectSuccessfulResponse(response);
       expect(Array.isArray(response.data)).toBe(true);
@@ -97,6 +102,10 @@ describe('RWA API - RWA by ID', () => {
     currentResponse = await apiClient.get<RwaCurrentResponse>(endpoints.RWA.CURRENT);
   });
 
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(currentResponse);
+  });
+
   it('should return a specific RWA by ID', async () => {
     const firstItem = currentResponse.data[0];
     const id = String(firstItem.id);
@@ -117,6 +126,10 @@ describe('RWA API - Asset by Ticker', () => {
 
   beforeAll(async () => {
     currentResponse = await apiClient.get<RwaCurrentResponse>(endpoints.RWA.CURRENT);
+  });
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(currentResponse);
   });
 
   it('should return a specific RWA by ticker', async () => {

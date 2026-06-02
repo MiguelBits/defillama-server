@@ -9,6 +9,7 @@ import {
   expectFreshData,
 } from '../../utils/testHelpers';
 import { ApiResponse } from '../../utils/config/apiClient';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.NFT_VOLUME.BASE_URL);
 
@@ -28,6 +29,10 @@ describe('NFT Volume API - Summary', () => {
       responses[protocol] = results[index];
     });
   }, 30000);
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(responses[testProtocols[0]]);
+  });
 
   describe.each(testProtocols)('Protocol: %s', (protocol) => {
     describe('Basic Response Validation', () => {

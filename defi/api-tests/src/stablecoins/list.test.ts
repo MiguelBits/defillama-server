@@ -14,6 +14,7 @@ import {
 } from '../../utils/testHelpers';
 import { validate } from '../../utils/validation';
 import { ApiResponse } from '../../utils/config/apiClient';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 describe('Stablecoins API - List', () => {
   let stablecoinsResponse: ApiResponse<StablecoinsListResponse>;
@@ -27,6 +28,10 @@ describe('Stablecoins API - List', () => {
   });
 
   describe('Basic Response Validation', () => {
+    it('should expose CORS headers', () => {
+      expectCorsHeaders(stablecoinsResponse);
+    });
+
     it('should return successful response with valid structure', () => {
       expectSuccessfulResponse(stablecoinsResponse);
       expectObjectResponse(stablecoinsResponse);

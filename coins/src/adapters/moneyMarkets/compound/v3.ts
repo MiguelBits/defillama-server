@@ -82,7 +82,7 @@ async function getCometPrices(
     baseTokenInfo.symbol,
     timestamp,
     "compound-v3",
-    1,
+    0.9,
   );
 
   return writes;

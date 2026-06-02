@@ -9,12 +9,24 @@ import {
 } from '../../utils/testHelpers';
 import { validate } from '../../utils/validation';
 import { ApiResponse } from '../../utils/config/apiClient';
+import { expectCorsHeaders } from '../../utils/corsHelpers';
 
 const apiClient = createApiClient(endpoints.UNLOCKS.BASE_URL);
 
 describe('Unlocks API - Emission', () => {
   // Test with multiple protocols to ensure robustness
   const testProtocols = ['overnight', 'uniswap'];
+
+  let corsResponse: ApiResponse<EmissionResponse>;
+  beforeAll(async () => {
+    corsResponse = await apiClient.get<EmissionResponse>(
+      endpoints.UNLOCKS.EMISSION(testProtocols[0])
+    );
+  }, 30000);
+
+  it('should expose CORS headers', () => {
+    expectCorsHeaders(corsResponse);
+  });
 
   testProtocols.forEach((protocol) => {
     describe(`Protocol: ${protocol}`, () => {
