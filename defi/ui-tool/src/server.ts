@@ -12,6 +12,7 @@ import { runMiscCommand } from './misc';
 import { apiTestFormChoices, runApiTests, stopApiTests } from './api-tests';
 import { runSpikesCommand } from './spikes';
 import { runTvlAction, tvlProtocolList, tvlProtocolRefillability, tvlStoreAllWaitingRecords, removeTvlStoreWaitingRecords, sendTvlStoreWaitingRecords, sendTvlDeleteWaitingRecords, tvlDeleteClearList, tvlDeleteSelectedRecords, tvlDeleteAllRecords, } from './tvl'
+import { runRwaCommand, stopRwaCommand, getRwaChoices, getRwaPreflight, rwaPreviewRouter } from './rwa'
 
 import { setConfig } from './utils/config';
 import getTvlCacheEnv from '../../src/api2/env';
@@ -31,6 +32,24 @@ async function start() {
 
 
   const AUTH_PASSWORD = process.env.WS_AUTH_PASSWORD;
+  const PREVIEW_PORT = Number(process.env.UI_TOOL_PREVIEW_PORT || 8081);
+
+  // Serves the before/after HTML previews each RWA refill script writes.
+  // Dev: React runs on a separate origin so we expose this on a dedicated port.
+  // Prod: the router is also mounted same-origin on the main app server (see
+  // startProdWebServer) so previews survive behind whatever proxy fronts the app.
+  function startPreviewServer() {
+    try {
+      const express = require('express');
+      const app = express();
+      app.use(rwaPreviewRouter());
+      app.listen(PREVIEW_PORT, () => {
+        console.log(`RWA preview server listening on ${PREVIEW_PORT}`);
+      });
+    } catch (error) {
+      console.error('Failed to start RWA preview server:', error);
+    }
+  }
 
   process.on('uncaughtException', (err) => {
     console.error('Uncaught Exception:', err);
@@ -82,6 +101,10 @@ async function start() {
     const WebSocket = require('ws');
     const app = express();
     const buildRootDir = path.resolve(__dirname, '../build');
+
+    // Serve the RWA HTML previews same-origin so they work behind whatever
+    // proxy fronts the app (a separate port would not be exposed in prod).
+    app.use(rwaPreviewRouter());
 
     // Serve React static files
     app.use(express.static(buildRootDir));
@@ -150,7 +173,7 @@ async function start() {
 
     ws.send(JSON.stringify({
       type: 'init',
-      data: { dimensionFormChoices, tvlProtocolList, tvlProtocolRefillability, apiTestFormChoices }
+      data: { dimensionFormChoices, tvlProtocolList, tvlProtocolRefillability, apiTestFormChoices, previewPort: PREVIEW_PORT, previewSameOrigin: isProductionMode }
     }));
     sendWaitingRecords(ws);
     sendTvlStoreWaitingRecords(ws);
@@ -249,6 +272,19 @@ async function start() {
           runSpikesCommand(ws, data.data);
           break;
 
+        case 'rwa-runCommand':
+          runRwaCommand(ws, data.data);
+          break;
+        case 'rwa-stop':
+          stopRwaCommand(ws);
+          break;
+        case 'rwa-get-choices':
+          await getRwaChoices(ws);
+          break;
+        case 'rwa-get-preflight':
+          await getRwaPreflight(ws, data.data);
+          break;
+
         default: console.error('Unknown message type:', data.type); break;
       }
     });
@@ -288,10 +324,14 @@ async function start() {
 
   console.log('Starting server in', isProductionMode ? 'production' : 'development', 'mode');
 
-  if (isProductionMode)
+  if (isProductionMode) {
+    // Prod serves previews same-origin from the main app server (see startProdWebServer).
     startProdWebServer();
-  else
+  } else {
+    // Dev: React runs on a separate origin, so previews need a standalone server.
+    startPreviewServer();
     startDevWebServer();
+  }
 
 }
 

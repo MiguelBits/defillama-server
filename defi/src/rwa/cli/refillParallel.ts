@@ -33,25 +33,39 @@ import { Op, QueryTypes } from "sequelize";
 //   - Phase 2: DELETE rows flagged as spikes (the $0 row at Aug 31)
 //   - Phase 3: UPDATE rows where mcap < expected × 0.7 (price-dip recovery)
 // Both Phase 2/3 scoped to id=644 only.
-const DRY_RUN = true;
-// --merge-write enables a Phase 1.5/1.6 merge-preserve write against existing
-// DB rows, run BEFORE Phases 2-3. Chains absent from the new compute are
-// preserved from the existing row, chains present in the new compute overwrite
-// (only when non-zero).
-// Use this when an RWA has on-chain contracts on a chain whose SDK adapter
-// throws on historical timestamps (stellar/aptos/solana/sui/starknet/osmosis/
-// provenance) AND you've already backfilled that chain separately — the merge
-// preserves your backfill values for those chains while filling in fresh data
-// from the new pipeline (peggedassets, EVM archive fetches, etc.).
+function cliArg(name: string): string | null {
+  const i = process.argv.indexOf(name);
+  return i >= 0 ? process.argv[i + 1] : null;
+}
+// All config below is argv-overridable (so the ui-tool can drive this script)
+// but defaults preserve the previously-hardcoded values, so CLI usage is unchanged.
+// Pass --dry-run to force dry, --commit-cleanup to force writes; otherwise the
+// hardcoded default applies.
+const HARDCODED_DRY_RUN = false;
+const DRY_RUN = process.argv.includes("--commit-cleanup") ? false
+              : process.argv.includes("--dry-run") ? true
+              : HARDCODED_DRY_RUN;
+const START_DATE = cliArg("--start") ?? "2024-01-01";
+const END_DATE = cliArg("--end") ?? "2026-05-12";
+const BACKFILL_CONCURRENCY = Number(cliArg("--backfill-concurrency") ?? 5);
+const ID_CONCURRENCY = Number(cliArg("--id-concurrency") ?? 10);
+const PRICE_FETCH_CONCURRENCY = Number(cliArg("--price-concurrency") ?? 8);
+// Optional explicit ID scope: --ids id1,id2,... When omitted, falls back to the
+// hardcoded default set.
+const IDS_OVERRIDE = cliArg("--ids");
+const IDS = IDS_OVERRIDE
+  ? IDS_OVERRIDE.split(",").map((s) => s.trim()).filter(Boolean)
+  : ["133"];
+// When set (dry-run only), write the per-ID post-refill rows (after spike
+// removal + price-dip fix) as JSON to this path, so a downstream script can use
+// the refill's *proposed* output as its baseline — enabling a combined preview
+// (refill → chain backfill) without any DB writes.
+const EMIT_ROWS = cliArg("--emit-rows");
+// --merge-write: Phase 1.5/1.6 merge-preserve write against existing DB rows,
+// preserving per-chain values the new compute doesn't produce (e.g. a separately
+// backfilled stellar/solana leg). Off by default. Independent of --emit-rows,
+// which is the in-memory combined-preview path.
 const MERGE_WRITE = process.argv.includes("--merge-write");
-const START_DATE = "2021-06-09";
-const END_DATE = "2026-05-22";
-const BACKFILL_CONCURRENCY = 5;
-const ID_CONCURRENCY = 10;
-const PRICE_FETCH_CONCURRENCY = 8;
-const IDS = [
-  "133",
-];
 
 // Early-stop: if an ID has 0 data for this many consecutive days (going backwards), skip it
 const ZERO_STREAK_CUTOFF = 30;
@@ -500,6 +514,8 @@ interface IdResult {
   afterPriceFix: ChartSeries[];
   spikeCount: number;
   priceFixCount: number;
+  // Full post-refill rows (DAILY_RWA_DATA shape), only populated when --emit-rows.
+  fullRows?: any[];
 }
 
 interface ChartSeries { timestamp: number; mcap: number; activeMcap: number }
@@ -636,6 +652,7 @@ async function processOneId(
     afterPriceFix,
     spikeCount: spikeTimestamps.size,
     priceFixCount: fixCount,
+    fullRows: EMIT_ROWS ? fixedRows : undefined,
   };
 }
 
@@ -757,10 +774,10 @@ const CHAIN_TO_BACKFILL_SCRIPT: Record<string, string> = {
   solana: "defi/src/rwa/cli/backfillSolanaRwaMcap.ts",
 };
 
-export async function preflightHistoricalIncompatibleChains(ids: string[]): Promise<void> {
+export interface PreflightHit { id: string; ticker: string; chains: string[] }
+export async function preflightHistoricalIncompatibleChains(ids: string[]): Promise<PreflightHit[]> {
   const context = await prepareAtvlContext(ids);
-  interface Hit { id: string; ticker: string; chains: string[] }
-  const hits: Hit[] = [];
+  const hits: PreflightHit[] = [];
   for (const id of ids) {
     const entry = (context.finalData as any)[id];
     if (!entry?.contracts) continue;
@@ -777,7 +794,7 @@ export async function preflightHistoricalIncompatibleChains(ids: string[]): Prom
   }
   if (hits.length === 0) {
     console.log(`  Pre-flight: ✓ no historical-incompatible chains in selected IDs`);
-    return;
+    return hits;
   }
   console.log("");
   console.log("  ⚠️  Pre-flight WARNING — assets with throw-on-historical chains");
@@ -806,6 +823,7 @@ export async function preflightHistoricalIncompatibleChains(ids: string[]): Prom
   console.log(`  This warning is informational — refillParallel will continue.`);
   console.log(`  Use a per-chain backfill script BEFORE or AFTER this run to fill the gap.`);
   console.log("");
+  return hits;
 }
 
 // ── Phase 1.5/1.6: Merge-preserve write ──────────────────────────────
@@ -1013,7 +1031,15 @@ async function main() {
   const idOrder = new Map(IDS.map((id, i) => [id, i]));
   results.sort((a, b) => (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0));
 
-  // Phase 5: Generate HTML preview
+  // Emit post-refill rows for downstream composition (combined preview).
+  if (EMIT_ROWS) {
+    const emit: Record<string, any[]> = {};
+    for (const r of results) if (r.fullRows) emit[r.id] = r.fullRows;
+    fs.writeFileSync(EMIT_ROWS, JSON.stringify(emit));
+    console.log(`Emitted post-refill rows for ${Object.keys(emit).length} ID(s) to ${EMIT_ROWS}`);
+  }
+
+  // Phase 4: Generate HTML preview
   if (results.length > 0) {
     const html = generateHtml(results);
     const outPath = path.join(__dirname, "refill-preview.html");

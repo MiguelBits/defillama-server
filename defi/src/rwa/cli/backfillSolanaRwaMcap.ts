@@ -218,9 +218,17 @@ const NO_PREVIEW = process.argv.includes("--no-preview");
 const FALLBACK_NEAREST_PRICE = process.argv.includes("--fallback-nearest-price");
 const FILL_MISSING_CHAINS = process.argv.includes("--fill-missing-chains");
 const OUT = arg("--out") ?? `./preview-${ASSET_ID ?? "rwa"}.html`;
+// When set, use the rows in this JSON file ({ [id]: rows[] }) as the existing
+// baseline instead of reading the DB — lets an upstream refill's *proposed*
+// output feed this backfill, for a combined dry-run preview. Never committed.
+const BASELINE_JSON = arg("--baseline-json");
 
 if (!ASSET_ID || !MINT || !CSV) {
   console.error("ERROR: --asset-id, --mint, --csv are all required");
+  process.exit(1);
+}
+if (BASELINE_JSON && !DRY_RUN) {
+  console.error("ERROR: --baseline-json is a simulated baseline and must not be written to prod; pass --dry-run");
   process.exit(1);
 }
 
@@ -376,6 +384,34 @@ function sumChainValues(chainMap: { [chain: string]: any } | null | undefined): 
     if (Number.isFinite(n)) total += n;
   }
   return total;
+}
+
+function parseJsonLoose(v: any): any {
+  if (v == null) return {};
+  if (typeof v === "object" && !Array.isArray(v)) return v;
+  try { const p = JSON.parse(v); return p && typeof p === "object" && !Array.isArray(p) ? p : {}; }
+  catch { return {}; }
+}
+
+// Load { [id]: rows[] } (or a bare rows[]) emitted by an upstream script and
+// reshape into the same {existingAgg, existingChains} the DB fetches return.
+function loadBaselineRows(file: string, id: string): { existingAgg: any[]; existingChains: any[] } {
+  const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+  const rows: any[] = Array.isArray(parsed) ? parsed : (parsed[id] || []);
+  const existingAgg = rows.map((r) => ({
+    timestamp: Number(r.timestamp),
+    aggregatemcap: Number(r.aggregatemcap) || 0,
+    aggregatedactivemcap: Number(r.aggregatedactivemcap) || 0,
+    aggregatedefiactivetvl: Number(r.aggregatedefiactivetvl) || 0,
+  }));
+  const existingChains = rows.map((r) => ({
+    timestamp: Number(r.timestamp),
+    mcap: parseJsonLoose(r.mcap),
+    activemcap: parseJsonLoose(r.activemcap),
+    defiactivetvl: parseJsonLoose(r.defiactivetvl),
+    totalsupply: parseJsonLoose(r.totalsupply),
+  }));
+  return { existingAgg, existingChains };
 }
 
 interface PlannedWrite {
@@ -606,6 +642,8 @@ function renderHtml(
   const lastAfter = after[after.length - 1];
   const fullCount = writes.filter((w) => w.changed.mcap || w.changed.activeMcap).length;
   const supplyOnlyCount = writes.length - fullCount;
+  const beforeLabel = BASELINE_JSON ? "After refill (upstream baseline)" : "Before backfill (current prod)";
+  const afterLabel = BASELINE_JSON ? "After refill + backfill (final)" : "After backfill (projected)";
 
   return `<!doctype html>
 <html lang="en"><head>
@@ -647,9 +685,9 @@ function renderHtml(
   new Chart(document.getElementById('chart'), {
     type: 'line',
     data: { datasets: [
-      { label: 'Before backfill (current prod)', data: before, borderColor: '#f85149',
+      { label: ${JSON.stringify(beforeLabel)}, data: before, borderColor: '#f85149',
         borderWidth: 2, pointRadius: 0, tension: 0.1 },
-      { label: 'After backfill (projected)', data: after, borderColor: '#3fb950',
+      { label: ${JSON.stringify(afterLabel)}, data: after, borderColor: '#3fb950',
         borderWidth: 2, pointRadius: 0, tension: 0.1 },
     ]},
     options: {
@@ -676,13 +714,20 @@ async function main() {
     `[backfill] DRY_RUN=${DRY_RUN} ASSET_ID=${ASSET_ID} MINT=${MINT} CSV=${CSV} ` +
     `FROM_DATE=${FROM_DATE ?? "(none)"} FLAT_NAV=${FLAT_NAV ?? "(coins API)"}`
   );
-  await initPG();
-
-  const existingAgg = await fetchDailyRecordsForIdPG(ASSET_ID!);
-  const existingChains = await fetchDailyRecordsWithChainsForIdPG(ASSET_ID!);
+  let existingAgg: any[];
+  let existingChains: any[];
+  if (BASELINE_JSON) {
+    // Pure dry-run against an injected baseline — no DB needed.
+    ({ existingAgg, existingChains } = loadBaselineRows(BASELINE_JSON, ASSET_ID!));
+    console.log(`[backfill] using injected baseline: ${existingAgg.length} rows from ${BASELINE_JSON} (DB rows ignored)`);
+  } else {
+    await initPG();
+    existingAgg = await fetchDailyRecordsForIdPG(ASSET_ID!);
+    existingChains = await fetchDailyRecordsWithChainsForIdPG(ASSET_ID!);
+    console.log(`[backfill] fetched ${existingAgg.length} existing daily rows for id=${ASSET_ID}`);
+  }
   const chainsByTs = new Map<number, any>();
   for (const r of existingChains) chainsByTs.set(r.timestamp, r);
-  console.log(`[backfill] fetched ${existingAgg.length} existing daily rows for id=${ASSET_ID}`);
 
   const rawSeries = parseCsv(CSV!);
   const NO_FORWARD_FILL = process.argv.includes("--no-forward-fill");

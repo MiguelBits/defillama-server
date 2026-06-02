@@ -19,6 +19,7 @@ import dayjs from 'dayjs';
 import './App.css';
 import { Line } from '@ant-design/plots';
 import { ApiTestForm, parseAnsiToHtml } from './ApiTestTab.tsx';
+import { RwaTab } from './RwaTab.tsx';
 
 const { Content, } = Layout;
 const { Text } = Typography;
@@ -122,6 +123,16 @@ const App = () => {
   });
   const [tvlSubTab, setTvlSubTab] = useState('refill');
 
+  // rwa tab
+  const [rwaChoices, setRwaChoices] = useState({ assets: [], solanaNamedTargets: [], hasDuneKey: false, hasAlchemyKey: false });
+  const [rwaRunning, setRwaRunning] = useState(false);
+  const [rwaPreviews, setRwaPreviews] = useState([]);
+  const [previewPort, setPreviewPort] = useState(8081);
+  // In prod the preview HTML is served same-origin by the main app server; in
+  // dev it comes from the standalone preview server on previewPort.
+  const [previewSameOrigin, setPreviewSameOrigin] = useState(false);
+  const [rwaPreflight, setRwaPreflight] = useState(null);
+
   function addWebSocketConnection() {
     try {
       _addWebSocketConnection();
@@ -178,6 +189,8 @@ const App = () => {
           console.log('WebSocket initialized');
           setFormOptions(data.data);
           setAdapterTypes(data.data.dimensionFormChoices.adapterTypes);
+          if (data.data.previewPort) setPreviewPort(data.data.previewPort);
+          setPreviewSameOrigin(!!data.data.previewSameOrigin);
           break;
         case 'output':
         case 'error':
@@ -225,6 +238,18 @@ const App = () => {
         // spikes tab
         case 'spikes-list-response':
           setSpikesData(data.data || []);
+          break;
+
+        // rwa tab
+        case 'rwa-form-choices':
+          setRwaChoices(data.data);
+          break;
+        case 'rwa-run-complete':
+          setRwaRunning(false);
+          if (data.data?.previews?.length) setRwaPreviews(data.data.previews);
+          break;
+        case 'rwa-preflight-result':
+          setRwaPreflight(data.data);
           break;
         default:
           console.log('Unknown message type', data);
@@ -285,6 +310,10 @@ const App = () => {
   const clearOutput = () => {
     setOutput('');
   };
+
+  // Same-origin (prod) → relative URL resolves against the app origin and works
+  // behind whatever proxy serves the app. Dev → standalone preview server port.
+  const previewBaseUrl = previewSameOrigin ? '' : `http://${window.location.hostname}:${previewPort}`;
 
   return (
     <ConfigProvider theme={{
@@ -399,6 +428,22 @@ const App = () => {
                       />
                     ),
                   },
+                  {
+                    label: 'rwa',
+                    key: 'rwa',
+                    children: (
+                      <RwaTab
+                        wsRef={wsRef}
+                        isConnected={isConnected}
+                        rwaChoices={rwaChoices}
+                        rwaRunning={rwaRunning}
+                        rwaPreviews={rwaPreviews}
+                        previewBaseUrl={previewBaseUrl}
+                        setRwaRunning={setRwaRunning}
+                        rwaPreflight={rwaPreflight}
+                      />
+                    ),
+                  },
                 ]}
                 onChange={(key) => {
                   setActiveTabKey(key);
@@ -413,6 +458,7 @@ const App = () => {
               {activeTabKey === 'tvl' && tvlSubTab === 'refill' && getTvlDeleteWaitingTable()}
               {activeTabKey === 'tvl' && tvlSubTab === 'spikes' && getSpikesTable()}
               {activeTabKey === 'misc' && getMiscOutputTable()}
+              {activeTabKey === 'rwa' && getRwaPreviewPanel()}
 
               {output && showDebugLogs && (<Divider>Console Output</Divider>)}
               <div
@@ -966,6 +1012,31 @@ const App = () => {
       connectNulls: { connect: false },
     }
     return <Line {...config} />
+  }
+
+  function getRwaPreviewPanel() {
+    if (!rwaPreviews?.length) return null;
+    return (
+      <div>
+        <Divider>RWA preview</Divider>
+        {rwaPreviews.map((p) => {
+          const src = previewBaseUrl + p.url;
+          return (
+            <div key={p.url} style={{ marginBottom: 20 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <Text strong>{p.label}</Text>
+                <a href={src} target="_blank" rel="noreferrer">Open in new tab</a>
+              </div>
+              <iframe
+                title={p.label}
+                src={src}
+                style={{ width: '100%', height: 520, border: '1px solid #303030', borderRadius: 8, background: '#fff' }}
+              />
+            </div>
+          );
+        })}
+      </div>
+    );
   }
 
   function getWaitingRecordsTable() {
