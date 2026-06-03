@@ -149,6 +149,8 @@ export async function runRwaCommand(ws: any, data: any) {
       return runXstockExcluded(ws, options);
     case "combined-preview":
       return runCombinedPreview(ws, options);
+    case "combined-commit":
+      return runCombinedCommit(ws, options);
     case "fetch-solana-csv":
       return runFetchSolanaCsv(ws, options);
     case "fetch-stellar-csv":
@@ -437,13 +439,9 @@ function runXstockExcluded(ws: any, o: any) {
  * can see the true end-state of (refill + chain backfill) without any DB writes.
  */
 async function runCombinedPreview(ws: any, o: any) {
-  const { assetId, chain } = o;
-  if (!assetId || !chain) {
-    send(ws, "error", { content: "combined-preview needs assetId and chain (solana|stellar)." });
-    return;
-  }
-  if (chain !== "solana" && chain !== "stellar") {
-    send(ws, "error", { content: `Unsupported chain: ${chain}` });
+  const { assetId } = o;
+  if (!assetId) {
+    send(ws, "error", { content: "combined-preview needs assetId and chain(s)." });
     return;
   }
   if (currentChild) {
@@ -451,64 +449,196 @@ async function runCombinedPreview(ws: any, o: any) {
     return;
   }
 
-  // Derive mint/asset/decimals from metadata, then auto-fetch (or reuse) the
-  // supply CSV. No free-form inputs from the client → no junk CSVs on disk.
   const asset = await getAsset(String(assetId));
   if (!asset) { send(ws, "error", { content: `Asset id ${assetId} not found in metadata.` }); return; }
 
-  let csv: string;
-  try {
-    csv = await ensureCsv(ws, chain, asset, String(assetId));
-  } catch (e: any) {
-    send(ws, "error", { content: e?.message || String(e) });
-    send(ws, "rwa-run-complete", { data: { operation: "combined-preview", code: -1, ok: false, previews: [] } });
+  // Resolve the ordered list of chains to compose. Accept an explicit `chains`
+  // array or a single `chain`; "all"/"both" (or omitting it) auto-detects every
+  // backfill-eligible chain in the asset's metadata. Always Solana before Stellar
+  // for a deterministic refill → leg → leg chain.
+  const ALL_CHAINS: ("solana" | "stellar")[] = ["solana", "stellar"];
+  const available = ALL_CHAINS.filter((c) =>
+    c === "solana" ? !!pickSolanaMint(asset) : !!pickStellarAsset(asset));
+  let chains: string[];
+  if (Array.isArray(o.chains) && o.chains.length) chains = o.chains;
+  else if (!o.chain || o.chain === "all" || o.chain === "both") chains = [...available];
+  else chains = [o.chain];
+  const bad = chains.find((c) => c !== "solana" && c !== "stellar");
+  if (bad) { send(ws, "error", { content: `Unsupported chain: ${bad}` }); return; }
+  chains = ALL_CHAINS.filter((c) => chains.includes(c)); // normalise order + dedupe
+  const missing = chains.filter((c) => !available.includes(c as "solana" | "stellar"));
+  if (missing.length) {
+    send(ws, "error", { content: `Asset ${assetId} (${asset.ticker}) has no ${missing.join("/")} contract in metadata.` });
     return;
   }
+  if (!chains.length) {
+    send(ws, "error", { content: `Asset ${assetId} (${asset.ticker}) has no Solana/Stellar contract to backfill.` });
+    return;
+  }
+  send(ws, "output", { content: `Combined preview chains (in order): refill → ${chains.join(" → ")}` });
 
+  // Auto-fetch (or reuse) every chain's supply CSV up front so a fetch failure
+  // aborts before we spend time on the refill.
   fs.mkdirSync(SOLANA_WORK_DIR, { recursive: true });
-  const baselineJson = path.join(SOLANA_WORK_DIR, `combined-baseline-${assetId}.json`);
-  try { fs.rmSync(baselineJson, { force: true }); } catch { /* ignore */ }
+  const csvByChain: Record<string, string> = {};
+  for (const c of chains) {
+    try {
+      csvByChain[c] = await ensureCsv(ws, c as "solana" | "stellar", asset, String(assetId));
+    } catch (e: any) {
+      send(ws, "error", { content: e?.message || String(e) });
+      send(ws, "rwa-run-complete", { data: { operation: "combined-preview", code: -1, ok: false, previews: [] } });
+      return;
+    }
+  }
 
-  // Step 1 — refill dry-run, emit proposed rows.
-  const refillArgs = ["--ids", String(assetId), "--emit-rows", baselineJson];
+  // Step 1 — refill dry-run, emit proposed rows as the first baseline.
+  const baseline0 = path.join(SOLANA_WORK_DIR, `combined-baseline-${assetId}.json`);
+  try { fs.rmSync(baseline0, { force: true }); } catch { /* ignore */ }
+  const refillArgs = ["--ids", String(assetId), "--emit-rows", baseline0];
   if (o.startDate) refillArgs.push("--start", o.startDate);
   if (o.endDate) refillArgs.push("--end", o.endDate);
   const s1 = scriptCmd("src/rwa/cli/refillParallel.ts", refillArgs);
   const code1 = await spawnStep(ws, "combined-preview · step 1 refill", s1.command, s1.args, { env: { NODE_OPTIONS: NODE_BIG_MEM } });
   if (code1 === -2) return;
-  if (code1 !== 0 || !fs.existsSync(baselineJson)) {
+  if (code1 !== 0 || !fs.existsSync(baseline0)) {
     send(ws, "error", { content: `Refill step failed (exit ${code1}) or produced no baseline — aborting combined preview.` });
     send(ws, "rwa-run-complete", { data: { operation: "combined-preview", code: code1, ok: false, previews: [] } });
     return;
   }
 
-  // Step 2 — chain backfill dry-run, using the refill output as its baseline.
-  const outName = `combined-${chain}-${assetId}.html`;
-  const out = path.join(CLI_DIR, outName);
-  const common = ["--asset-id", String(assetId), "--csv", csv, "--baseline-json", baselineJson, "--dry-run", "--out", out];
-  if (o.fromDate) common.push("--from-date", o.fromDate);
-  if (o.flatNav) common.push("--flat-nav", String(o.flatNav));
-  if (o.fallbackNearestPrice) common.push("--fallback-nearest-price");
-  if (o.fillMissingChains) common.push("--fill-missing-chains");
-
-  let s2: { command: string; args: string[] };
-  if (chain === "solana") {
-    const mint = pickSolanaMint(asset)!;
-    s2 = scriptCmd("src/rwa/cli/backfillSolanaRwaMcap.ts", ["--mint", mint, ...common]);
-  } else {
-    const ast = pickStellarAsset(asset)!;
-    s2 = scriptCmd("src/rwa/cli/backfillStellarRwaMcap.ts", ["--asset", ast, ...common]);
-  }
-  const code2 = await spawnStep(ws, "combined-preview · step 2 backfill", s2.command, s2.args, { env: { NODE_OPTIONS: NODE_BIG_MEM } });
-  if (code2 === -2) return;
-
+  // Steps 2..N — chain each backfill onto the previous step's emitted rows, so
+  // the final HTML shows refill + every chain composed. Each backfill stays
+  // dry-run (--baseline-json forces it), so nothing touches the DB.
   const previews = [
     ...previewIfExists("Step 1 — current → after refill", "/rwa-preview/refill-preview.html", path.join(CLI_DIR, "refill-preview.html")),
-    ...previewIfExists("Step 2 — after refill → after refill + backfill (final)", `/rwa-preview/${outName}`, out),
   ];
-  const ok = code2 === 0;
-  send(ws, ok ? "output" : "error", { content: `\n${ok ? "✅" : "❌"} combined-preview finished (refill exit ${code1}, backfill exit ${code2})\n` });
-  send(ws, "rwa-run-complete", { data: { operation: "combined-preview", code: code2, ok, previews } });
+  let prevBaseline = baseline0;
+  let lastCode = code1;
+  const composed: string[] = [];
+  for (let i = 0; i < chains.length; i++) {
+    const c = chains[i];
+    const isLast = i === chains.length - 1;
+    const emitOut = path.join(SOLANA_WORK_DIR, `combined-baseline-${assetId}-${c}.json`);
+    try { fs.rmSync(emitOut, { force: true }); } catch { /* ignore */ }
+    const outName = `combined-${c}-${assetId}.html`;
+    const out = path.join(CLI_DIR, outName);
+    const common = [
+      "--asset-id", String(assetId), "--csv", csvByChain[c],
+      "--baseline-json", prevBaseline, "--emit-rows", emitOut,
+      "--dry-run", "--out", out,
+    ];
+    if (o.fromDate) common.push("--from-date", o.fromDate);
+    if (o.flatNav) common.push("--flat-nav", String(o.flatNav));
+    if (o.fallbackNearestPrice) common.push("--fallback-nearest-price");
+    if (o.fillMissingChains) common.push("--fill-missing-chains");
+    const cmd = c === "solana"
+      ? scriptCmd("src/rwa/cli/backfillSolanaRwaMcap.ts", ["--mint", pickSolanaMint(asset)!, ...common])
+      : scriptCmd("src/rwa/cli/backfillStellarRwaMcap.ts", ["--asset", pickStellarAsset(asset)!, ...common]);
+    const stepCode = await spawnStep(ws, `combined-preview · step ${i + 2} ${c} backfill`, cmd.command, cmd.args, { env: { NODE_OPTIONS: NODE_BIG_MEM } });
+    if (stepCode === -2) return;
+    lastCode = stepCode;
+    composed.push(c);
+    const label = isLast
+      ? `Step ${i + 2} — refill + ${composed.join(" + ")} (final)`
+      : `Step ${i + 2} — + ${c}`;
+    previews.push(...previewIfExists(label, `/rwa-preview/${outName}`, out));
+    if (stepCode !== 0 || !fs.existsSync(emitOut)) {
+      send(ws, "error", { content: `${c} backfill failed (exit ${stepCode}) or produced no baseline — stopping chain after ${composed.join(" + ")}.` });
+      break;
+    }
+    prevBaseline = emitOut;
+  }
+
+  const ok = lastCode === 0;
+  send(ws, ok ? "output" : "error", { content: `\n${ok ? "✅" : "❌"} combined-preview finished (refill exit ${code1}; composed: ${composed.join(" + ") || "none"})\n` });
+  send(ws, "rwa-run-complete", { data: { operation: "combined-preview", code: lastCode, ok, previews } });
+}
+
+/**
+ * COMMIT counterpart of runCombinedPreview: writes the composed result (EVM +
+ * Solana + Stellar) to prod in ONE orchestrated action so the requirement is met
+ * in a single step rather than three manual commands.
+ *
+ * Order (the documented, verified-safe one):
+ *   1. chain backfills in COMMIT mode (--fill-missing-chains) write each chain's
+ *      leg directly to daily_rwa_data — Stellar first so its gap-day row inserts
+ *      exist before Solana merges onto them (prevents the chain-drop crash).
+ *   2. refillParallel --merge-write --commit-cleanup recomputes + commits the EVM
+ *      legs while the merge-preserve step keeps the chains just written. This makes
+ *      prod match the composed preview the PM signed off on.
+ *
+ * Gated behind the typed-WRITE confirmation on the client. Aborts before the refill
+ * if any chain backfill fails, so prod is never left half-composed.
+ */
+async function runCombinedCommit(ws: any, o: any) {
+  const { assetId } = o;
+  if (!assetId) { send(ws, "error", { content: "combined-commit needs assetId and chain(s)." }); return; }
+  if (currentChild) { send(ws, "error", { content: `A refill (${currentOperation}) is already running. Stop it first.` }); return; }
+
+  const asset = await getAsset(String(assetId));
+  if (!asset) { send(ws, "error", { content: `Asset id ${assetId} not found in metadata.` }); return; }
+
+  // Stellar before Solana — Stellar's --fill-missing-chains inserts the gap-day
+  // rows that Solana then merges its leg onto (verified to avoid the chain-drop crash).
+  const ALL_CHAINS: ("solana" | "stellar")[] = ["stellar", "solana"];
+  const available = ALL_CHAINS.filter((c) =>
+    c === "solana" ? !!pickSolanaMint(asset) : !!pickStellarAsset(asset));
+  let chains: string[];
+  if (Array.isArray(o.chains) && o.chains.length) chains = o.chains;
+  else if (!o.chain || o.chain === "all" || o.chain === "both") chains = [...available];
+  else chains = [o.chain];
+  const bad = chains.find((c) => c !== "solana" && c !== "stellar");
+  if (bad) { send(ws, "error", { content: `Unsupported chain: ${bad}` }); return; }
+  chains = ALL_CHAINS.filter((c) => chains.includes(c)); // normalise to stellar→solana order + dedupe
+  const missing = chains.filter((c) => !available.includes(c as "solana" | "stellar"));
+  if (missing.length) { send(ws, "error", { content: `Asset ${assetId} (${asset.ticker}) has no ${missing.join("/")} contract in metadata.` }); return; }
+  if (!chains.length) { send(ws, "error", { content: `Asset ${assetId} (${asset.ticker}) has no Solana/Stellar contract to backfill.` }); return; }
+
+  send(ws, "output", { content: `⚠️  COMMIT to prod: chains [${chains.join(", ")}] then refill --merge-write, for id ${assetId}${o.startDate ? ` (${o.startDate}→${o.endDate || "now"})` : ""}` });
+
+  // Auto-fetch (or reuse) each chain's CSV up front so a fetch failure aborts before any write.
+  fs.mkdirSync(SOLANA_WORK_DIR, { recursive: true });
+  const csvByChain: Record<string, string> = {};
+  for (const c of chains) {
+    try { csvByChain[c] = await ensureCsv(ws, c as "solana" | "stellar", asset, String(assetId)); }
+    catch (e: any) {
+      send(ws, "error", { content: e?.message || String(e) });
+      send(ws, "rwa-run-complete", { data: { operation: "combined-commit", code: -1, ok: false, previews: [] } });
+      return;
+    }
+  }
+
+  // Steps 1..N — chain backfills, COMMIT mode (no --dry-run / --baseline-json).
+  let step = 1;
+  for (const c of chains) {
+    const common = ["--asset-id", String(assetId), "--csv", csvByChain[c], "--fill-missing-chains"];
+    if (o.fromDate) common.push("--from-date", o.fromDate);
+    if (o.flatNav) common.push("--flat-nav", String(o.flatNav));
+    if (o.fallbackNearestPrice) common.push("--fallback-nearest-price");
+    const cmd = c === "solana"
+      ? scriptCmd("src/rwa/cli/backfillSolanaRwaMcap.ts", ["--mint", pickSolanaMint(asset)!, ...common])
+      : scriptCmd("src/rwa/cli/backfillStellarRwaMcap.ts", ["--asset", pickStellarAsset(asset)!, ...common]);
+    const code = await spawnStep(ws, `combined-commit · step ${step} ${c} backfill (WRITE)`, cmd.command, cmd.args, { env: { NODE_OPTIONS: NODE_BIG_MEM } });
+    if (code === -2) return;
+    if (code !== 0) {
+      send(ws, "error", { content: `${c} backfill failed (exit ${code}) — aborting before the refill so prod isn't left half-composed.` });
+      send(ws, "rwa-run-complete", { data: { operation: "combined-commit", code, ok: false, previews: [] } });
+      return;
+    }
+    step++;
+  }
+
+  // Final step — EVM compute + merge-preserve write (keeps the chains just written).
+  const refillArgs = ["--ids", String(assetId), "--merge-write", "--commit-cleanup"];
+  if (o.startDate) refillArgs.push("--start", o.startDate);
+  if (o.endDate) refillArgs.push("--end", o.endDate);
+  const rf = scriptCmd("src/rwa/cli/refillParallel.ts", refillArgs);
+  const rcode = await spawnStep(ws, `combined-commit · step ${step} refill --merge-write (WRITE)`, rf.command, rf.args, { env: { NODE_OPTIONS: NODE_BIG_MEM } });
+  if (rcode === -2) return;
+
+  const ok = rcode === 0;
+  send(ws, ok ? "output" : "error", { content: `\n${ok ? "✅ committed" : "❌ refill failed"} — chains written, refill exit ${rcode}. EVM + ${chains.join(" + ")} now in prod for id ${assetId}.\n` });
+  send(ws, "rwa-run-complete", { data: { operation: "combined-commit", code: rcode, ok, previews: previewIfExists("Post-commit refill chart", "/rwa-preview/refill-preview.html", path.join(CLI_DIR, "refill-preview.html")) } });
 }
 
 function runFetchSolanaCsv(ws: any, o: any) {

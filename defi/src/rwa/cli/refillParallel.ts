@@ -42,7 +42,12 @@ function cliArg(name: string): string | null {
 // Pass --dry-run to force dry, --commit-cleanup to force writes; otherwise the
 // hardcoded default applies.
 const HARDCODED_DRY_RUN = false;
-const DRY_RUN = process.argv.includes("--commit-cleanup") ? false
+// --emit-rows produces the *proposed* baseline for the combined-preview pipeline;
+// a committing refill must never emit. Treat --emit-rows as implying dry-run so the
+// preview path can never write to prod (mirrors --baseline-json in the backfills).
+const EMIT_ROWS = cliArg("--emit-rows");
+const DRY_RUN = EMIT_ROWS ? true
+              : process.argv.includes("--commit-cleanup") ? false
               : process.argv.includes("--dry-run") ? true
               : HARDCODED_DRY_RUN;
 const START_DATE = cliArg("--start") ?? "2024-01-01";
@@ -56,11 +61,6 @@ const IDS_OVERRIDE = cliArg("--ids");
 const IDS = IDS_OVERRIDE
   ? IDS_OVERRIDE.split(",").map((s) => s.trim()).filter(Boolean)
   : ["133"];
-// When set (dry-run only), write the per-ID post-refill rows (after spike
-// removal + price-dip fix) as JSON to this path, so a downstream script can use
-// the refill's *proposed* output as its baseline — enabling a combined preview
-// (refill → chain backfill) without any DB writes.
-const EMIT_ROWS = cliArg("--emit-rows");
 // --merge-write: Phase 1.5/1.6 merge-preserve write against existing DB rows,
 // preserving per-chain values the new compute doesn't produce (e.g. a separately
 // backfilled stellar/solana leg). Off by default. Independent of --emit-rows,
@@ -84,13 +84,16 @@ const DIP_RATIO = 0.7;
 // ── Per-stage disk cache ──────────────────────────────────────────────
 // Each long-running stage writes its output to disk so a later-stage failure
 // (e.g. coins API timing out mid-Phase-3) doesn't force a full re-run.
-// Cache invalidates automatically when IDS / dates / DRY_RUN change.
+// Cache invalidates automatically when IDS / dates change. DRY_RUN is deliberately
+// NOT in the key: Phase 1 (the ~70-min atvl compute) and price fetches are
+// identical read-only work in both modes, so a dry-run preview's caches are reused
+// by the subsequent commit — you only pay the heavy compute once.
 // Pass --reset-cache to wipe and start fresh.
 const CACHE_RESET = process.argv.includes("--reset-cache");
 const CACHE_ROOT = "/tmp/refill-cache";
 const CACHE_KEY = crypto.createHash("sha256").update(JSON.stringify({
   script: "refillParallel",
-  IDS, START_DATE, END_DATE, DRY_RUN,
+  IDS, START_DATE, END_DATE,
 })).digest("hex").slice(0, 12);
 const CACHE_DIR = path.join(CACHE_ROOT, CACHE_KEY);
 
@@ -225,7 +228,8 @@ async function runBackfill(
 ): Promise<any[]> {
   // Phase 1 cache — always cache regardless of collectResults, so a commit-mode
   // run that fails in Phase 3 can skip Phase 1's ~70-min atvl work on retry.
-  // Cache invalidates on IDS / dates / DRY_RUN change (different CACHE_KEY).
+  // Cache invalidates on IDS / dates change (NOT DRY_RUN), so a dry-run preview
+  // populates this and the follow-up commit reuses it — heavy compute runs once.
   const cached = loadCache<any[]>("phase1");
   if (cached && cached.length > 0) {
     console.log(`\n── Phase 1: SKIPPED — loaded ${cached.length} cached rows from ${cachePath("phase1")} (pass --reset-cache to redo)`);

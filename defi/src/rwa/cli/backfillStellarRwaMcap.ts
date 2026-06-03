@@ -213,6 +213,11 @@ const OUT = arg("--out") ?? `./preview-${ASSET_ID ?? "rwa"}-stellar.html`;
 // baseline instead of reading the DB — lets an upstream refill's *proposed*
 // output feed this backfill, for a combined dry-run preview. Never committed.
 const BASELINE_JSON = arg("--baseline-json");
+// When set, write the post-backfill rows (the baseline overlaid with this chain's
+// merged legs) to this JSON path, in the same shape refillParallel --emit-rows
+// produces. A downstream chain backfill can then chain off it via --baseline-json,
+// composing multiple chains into one combined preview. Preview-only, never committed.
+const EMIT_ROWS = arg("--emit-rows");
 
 if (!ASSET_ID || !ASSET_CODE || !ASSET_ISSUER || !CSV) {
   console.error("ERROR: --asset-id, (--asset OR --asset-code+--asset-issuer), --csv are all required");
@@ -395,6 +400,40 @@ function loadBaselineRows(file: string, id: string): { existingAgg: any[]; exist
     totalsupply: parseJsonLoose(r.totalsupply),
   }));
   return { existingAgg, existingChains };
+}
+
+// Compose the post-backfill rows: the baseline overlaid with this chain's merged
+// per-day legs (writes[].newMcap already holds the full merged chain map). Shape
+// matches refillParallel --emit-rows so a downstream backfill can consume it via
+// --baseline-json and chain multiple chains into one combined preview.
+function buildEmitRows(existingChains: any[], existingAgg: any[], writes: PlannedWrite[], id: string): Record<string, any[]> {
+  const writeByTs = new Map<number, PlannedWrite>();
+  for (const w of writes) writeByTs.set(w.dayTs, w);
+  const aggByTs = new Map<number, any>();
+  for (const a of existingAgg) aggByTs.set(Number(a.timestamp), a);
+  const chainByTs = new Map<number, any>();
+  for (const c of existingChains) chainByTs.set(Number(c.timestamp), c);
+
+  const allTs = Array.from(new Set<number>([...chainByTs.keys(), ...writeByTs.keys()])).sort((a, b) => a - b);
+  const rows = allTs.map((ts) => {
+    const c = chainByTs.get(ts);
+    const w = writeByTs.get(ts);
+    const agg = aggByTs.get(ts) ?? {};
+    const mcap = w ? w.newMcap : (c?.mcap ?? {});
+    const activemcap = w ? w.newActiveMcap : (c?.activemcap ?? {});
+    const totalsupply = w ? w.newTotalSupply : (c?.totalsupply ?? {});
+    return {
+      timestamp: ts,
+      mcap: JSON.stringify(mcap),
+      activemcap: JSON.stringify(activemcap),
+      defiactivetvl: JSON.stringify(c?.defiactivetvl ?? {}),
+      totalsupply: JSON.stringify(totalsupply),
+      aggregatemcap: w ? w.newAggregateMcap : (Number(agg.aggregatemcap) || sumChainValues(mcap)),
+      aggregatedactivemcap: w ? w.newAggregateActiveMcap : (Number(agg.aggregatedactivemcap) || sumChainValues(activemcap)),
+      aggregatedefiactivetvl: Number(agg.aggregatedefiactivetvl) || 0,
+    };
+  });
+  return { [id]: rows };
 }
 
 interface PlannedWrite {
@@ -732,6 +771,12 @@ async function main() {
     `[backfill] would write: ${fullCount} full (mcap/activemcap/+supply) + ${supplyOnlyCount} supply-only; ` +
     `skipped (already populated): ${skipped}`
   );
+
+  if (EMIT_ROWS) {
+    const emit = buildEmitRows(existingChains, existingAgg, writes, ASSET_ID!);
+    fs.writeFileSync(path.resolve(EMIT_ROWS), JSON.stringify(emit));
+    console.log(`[backfill] emitted ${emit[ASSET_ID!].length} composed rows → ${EMIT_ROWS} (for chaining)`);
+  }
 
   if (DRY_RUN) {
     for (const w of writes.slice(0, 5)) {

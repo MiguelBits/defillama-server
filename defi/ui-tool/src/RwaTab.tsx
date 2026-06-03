@@ -277,18 +277,27 @@ function CombinedPreviewForm({ run, isConnected, rwaRunning, choices }: any) {
         : chain === "stellar" ? selected?.contracts?.Stellar?.[0]
         : null;
 
-    const onFinish = (v: any) => {
-        const options: any = {
-            assetId: v.assetId,
-            chain: v.chain,
-            startDate: v.dateRange?.[0] ? dayjs(v.dateRange[0]).format('YYYY-MM-DD') : undefined,
-            endDate: v.dateRange?.[1] ? dayjs(v.dateRange[1]).format('YYYY-MM-DD') : undefined,
-            fromDate: v.fromDate ? dayjs(v.fromDate).format('YYYY-MM-DD') : undefined,
-            flatNav: v.flatNav,
-            fallbackNearestPrice: v.fallbackNearestPrice || false,
-            fillMissingChains: v.fillMissingChains || false,
-        };
-        run('combined-preview', options, false, '');
+    const buildOptions = (v: any): any => ({
+        assetId: v.assetId,
+        chain: v.chain,
+        startDate: v.dateRange?.[0] ? dayjs(v.dateRange[0]).format('YYYY-MM-DD') : undefined,
+        endDate: v.dateRange?.[1] ? dayjs(v.dateRange[1]).format('YYYY-MM-DD') : undefined,
+        fromDate: v.fromDate ? dayjs(v.fromDate).format('YYYY-MM-DD') : undefined,
+        flatNav: v.flatNav,
+        fallbackNearestPrice: v.fallbackNearestPrice || false,
+        fillMissingChains: v.fillMissingChains || false,
+    });
+    // Preview: dry-run, composes all chains in-memory (no DB writes).
+    const onFinish = (v: any) => run('combined-preview', buildOptions(v), false, '');
+    // Commit: writes the composed result (chains + EVM merge-write refill) to prod
+    // in one orchestrated action. isWrite=true → typed-WRITE confirmation modal.
+    const onCommit = () => {
+        form.validateFields().then((v: any) => {
+            const opts = buildOptions(v);
+            const chainLabel = opts.chain === 'all' ? availableChains.join(' + ') : opts.chain;
+            const summary = `Commit composed result for ${selected?.ticker || opts.assetId} (id ${opts.assetId}) to PROD: ${chainLabel} chain backfill(s) + EVM refill --merge-write${opts.startDate ? `, ${opts.startDate}→${opts.endDate || 'now'}` : ''}. Writes daily_rwa_data + backup_rwa_data.`;
+            run('combined-commit', opts, true, summary);
+        }).catch(() => { /* validation errors shown inline */ });
     };
     return (
         <Form form={form} layout="vertical" onFinish={onFinish}>
@@ -306,6 +315,7 @@ function CombinedPreviewForm({ run, isConnected, rwaRunning, choices }: any) {
             <Form.Item label="Chain to backfill" name="chain" rules={[{ required: true }]}
                 help={!selected ? 'Pick an asset first' : availableChains.length === 0 ? 'This asset has no Solana or Stellar legs' : null}>
                 <Select placeholder="Select chain" disabled={!selected}>
+                    {availableChains.length > 1 && <Option value="all">{`All chains (compose: ${availableChains.join(' + ')})`}</Option>}
                     {availableChains.includes('solana') && <Option value="solana">Solana</Option>}
                     {availableChains.includes('stellar') && <Option value="stellar">Stellar</Option>}
                 </Select>
@@ -318,7 +328,14 @@ function CombinedPreviewForm({ run, isConnected, rwaRunning, choices }: any) {
                 <Form.Item label="Fallback nearest price" name="fallbackNearestPrice" valuePropName="checked" layout="horizontal"><Switch size="small" /></Form.Item>
                 <Form.Item label="Fill missing chains" name="fillMissingChains" valuePropName="checked" layout="horizontal"><Switch size="small" /></Form.Item>
             </Flex>
-            <Form.Item>{runButton(isConnected, rwaRunning, 'Run combined preview')}</Form.Item>
+            <Form.Item>
+                <Space>
+                    {runButton(isConnected, rwaRunning, 'Run combined preview')}
+                    <Button danger icon={<WarningOutlined />} disabled={!isConnected || rwaRunning} onClick={onCommit}>
+                        Commit composed (all chains)
+                    </Button>
+                </Space>
+            </Form.Item>
         </Form>
     );
 }
