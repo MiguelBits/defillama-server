@@ -569,7 +569,7 @@ export function computeFlowsFromChainRecords(records: any[]) {
   return computeFlowSeries(flowRows, getChainLabelFromKey);
 }
 
-async function storeFlowsForIdFromChainRecords(id: string, records: any[]): Promise<void> {
+export async function storeFlowsForIdFromChainRecords(id: string, records: any[]): Promise<void> {
   await storeFlowsForId(id, computeFlowsFromChainRecords(records));
 }
 
@@ -1280,7 +1280,7 @@ export async function generateAggregatedHistoricalCharts(metadata: RWAMetadata[]
     const pgCache = await readPGCacheForId(m.id);
     if (!pgCache) continue;
 
-    const categories = Array.isArray(m.data.category) ? m.data.category.filter(Boolean) : [];
+    const categories = (Array.isArray(m.data.category) ? m.data.category.filter(Boolean) : []) as string[];
     const primaryCategory = categories[0];
     const categoryAssetBreakdownCategories = new Set(categories);
     const platform = m.data.parentPlatform;
