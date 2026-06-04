@@ -595,6 +595,12 @@ export function computeFlowSeries(rows: FlowRow[], chainLabelFn: (slug: string) 
                 if (mcapT > 0 || mcapPrev > 0) missingChains.push(chainLabelFn(chainKey));
                 continue;
             }
+            // Net flow is $-denominated (supplyΔ × price). A chain with no mcap is
+            // unpriced, so it can't be valued in USD — exclude it from flows
+            // entirely, exactly as onChainMcap omits it. (A chain is "priced" iff
+            // it has an mcap.) This keeps the flow series consistent with mcap and
+            // prevents unpriced supply moves from being mis-counted.
+            if (mcapT <= 0) continue;
             const supplyPrev = Number(prev.totalsupply[chainKey]) || 0;
             const supplyT = Number(row.totalsupply[chainKey]) || 0;
             const priceT = supplyT > 0 ? mcapT / supplyT : 0;
