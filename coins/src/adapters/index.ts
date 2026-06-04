@@ -101,6 +101,7 @@ export default {
   SurARSs: require("./rwa/SurARSs"),
   xstocks: require("./rwa/xstocks"),
   wrappedXstocks: require("./rwa/xstocks"),
+  saturn_strc: require("./rwa/saturn_strc"),
   vela: require("./yield/vela"),
   chai: require("./yield/chai"),
   kuma: require("./rwa/kuma"),
