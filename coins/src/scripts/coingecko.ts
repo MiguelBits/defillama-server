@@ -19,7 +19,7 @@ import {
 import { storeAllTokens } from "../utils/shared/bridgedTvlPostgres";
 import { sendMessage } from "../../../defi/src/utils/discord";
 import { chainsThatShouldNotBeLowerCased } from "../utils/shared/constants";
-import { cacheSolanaTokens, getSymbolAndDecimals, isMetadataBlacklisted } from "./coingeckoUtils";
+import { cacheSolanaTokens, getSymbolAndDecimals, isMetadataBlacklisted, cgIdDenylist } from "./coingeckoUtils";
 import { dualWriteToChRedis } from "../adapters/utils/chRedisWrite";
 import * as sdk from "@defillama/sdk";
 
@@ -101,16 +101,8 @@ const ignoredChainSet = new Set([
   'kasplex-2', 'pundi-aifx-omnilayer', 'zama-gateway-mainnet', 'grx-chain',
 ]);
 
-// CoinGecko ids we deliberately do NOT price at all — no coingecko#id price record and no asset#
-// redirects on ANY chain. CG prices a coin as a single id across every platform, so its (mis)price would
-// override a better on-chain source everywhere; we drop the id and price each platform on-chain instead.
-// (CG only leaves an asset# slot alone when the stored confidence is > 0.99, so a 0.95 curve write can't
-// hold it while CG keeps re-creating the redirect — hence dropping the whole id rather than one slot.)
-const cgIdDenylist = new Set<string>([
-  // apxUSD (off-peg RWA; ethereum + base). Priced on-chain instead: ethereum via the deep Curve
-  // apxUSD/USDC pool; base redirected to the ethereum record via adapters/tokenMapping.json.
-  'apxusd',
-]);
+// cgIdDenylist (apxUSD, wstLINK — priced on-chain) is imported from ./coingeckoUtils so the same set is
+// shared with updateCoin.ts; applied in the coin-list filter in triggerFetchCoingeckoData below.
 
 async function getAndStoreCoins(coins: Coin[], rejected: Coin[]) {
   const coinData = await fetchCgPriceData(coins.map((c) => c.id));

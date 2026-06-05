@@ -6,6 +6,15 @@ import { getConnection } from "../adapters/solana/utils";
 import { chainsThatShouldNotBeLowerCased } from "../utils/shared/constants";
 import { cairoErc20Abis, call, feltArrToStr } from "../adapters/utils/starknet";
 
+// CoinGecko ids we deliberately DO NOT price — priced on-chain instead. MUST be honored in BOTH the
+// scheduled sync (scripts/coingecko.ts) AND the on-demand /current refetch (updateCoin.ts); otherwise
+// on-demand requests keep re-pulling the CG price and the slot never goes stale (blocking the on-chain
+// price + any bridge redirect).
+export const cgIdDenylist = new Set<string>([
+  'apxusd',              // priced via the deep Curve apxUSD/USDC pool (+ base redirect via tokenMapping.json)
+  'wrapped-staked-link', // wstLINK — priced by the wstlink adapter (getUnderlyingByWrapped × LINK)
+]);
+
 // Chains where we have no working metadata fetch path. Tokens on these chains
 // will be skipped without attempting (and failing) a fetch.
 const unsupportedMetadataChains = new Set<string>([

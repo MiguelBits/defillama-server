@@ -1,6 +1,7 @@
 import { successResponse, wrap, IResponse } from "./utils/shared";
 import { batchWrite } from "./utils/shared/dynamodb";
 import { dualWriteToChRedis } from "./adapters/utils/chRedisWrite";
+import { cgIdDenylist } from "./scripts/coingeckoUtils";
 import {
   CoinsResponse,
   fetchCgPriceData,
@@ -124,6 +125,7 @@ const handler = async (event: any): Promise<IResponse> => {
     if (d.PK in bulk && bulk[d.PK] > unixStart - margin) return;
     if (!d.redirect || !d.redirect.startsWith("coingecko#")) return;
     const id = d.redirect.substring(d.redirect.indexOf("#") + 1);
+    if (cgIdDenylist.has(id)) return; // denylisted id — priced on-chain, never refetch from CG
     if (id in bulk && bulk[id] > unixStart - margin) return;
 
     cgIds[d.PK] = id;
