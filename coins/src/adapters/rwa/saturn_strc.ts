@@ -13,16 +13,17 @@ const DECIMALS = 0; // 1 unit = 1 share
 const CONFIDENCE = 0.9;
 const ADAPTER = "saturn_strc";
 
-// Yahoo Finance daily closes (no API key). STRC IPO'd 2025-07-29, so 2y covers full history.
+// Yahoo Finance daily closes (no API key). range=max returns STRC's full history (IPO 2025-07-29)
+// so backfills stay complete even after the series grows past 2y.
 const SOURCE =
-  "https://query1.finance.yahoo.com/v8/finance/chart/STRC?range=2y&interval=1d";
+  "https://query1.finance.yahoo.com/v8/finance/chart/STRC?range=max&interval=1d";
 
 type Chart = {
   chart: {
     error: any;
     result?: {
       timestamp: number[];
-      indicators: { quote: { close: (number | null)[] }[] };
+      indicators?: { quote?: { close: (number | null)[] }[] };
     }[];
   };
 };
@@ -37,7 +38,9 @@ export async function saturn_strc(timestamp: number = 0): Promise<Write[]> {
     throw new Error(`saturn_strc: no STRC data from source (${res?.chart?.error})`);
 
   const ts = result.timestamp;
-  const closes = result.indicators.quote[0].close;
+  const closes = result.indicators?.quote?.[0]?.close;
+  if (!closes?.length)
+    throw new Error("saturn_strc: STRC payload missing close prices");
 
   // refillAdapter sets HISTORICAL=true and passes a non-zero timestamp; in that mode we
   // backfill the full daily series. The regular cron (timestamp 0) only refreshes the latest.
