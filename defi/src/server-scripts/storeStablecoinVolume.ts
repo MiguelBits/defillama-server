@@ -69,6 +69,12 @@ const SPIKE_WHITELIST: Record<string, 'all' | string[]> = {
   USDE: [
     '2026-05-14', // increase activities on solana by ethena campaign
   ],
+  USDS: [
+    '2026-06-04',
+  ],
+  SUSDS: [
+    '2026-06-04',
+  ],
 };
 
 function isSpikeWhitelisted(token: string, dayTimestamp: number): boolean {
