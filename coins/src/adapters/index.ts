@@ -215,6 +215,7 @@ export default {
   xaue: require("./rwa/xaue"),
   r25: require("./rwa/r25"),
   strato: require("./rwa/strato"),
+  gaib: require("./rwa/gaib"),
   dCOMP: require("./other/dCOMP"),
   valos: require("./other/valos"),
   pathUSD: require("./other/pathUSD"),

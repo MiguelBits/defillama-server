@@ -2749,6 +2749,11 @@
     }
   },
   "bsc": {
+    "0x18f52b3fb465118731d9e0d276d4eb3599d57596": {
+      "decimals": "18",
+      "symbol": "AID",
+      "to": "asset#ethereum:0x18f52b3fb465118731d9e0d276d4eb3599d57596"
+    },
     "0x5b4681f0d7a01b817675f25892d3ad73572fd1d9": {
       "decimals": "18",
       "symbol": "TBILL",
@@ -4084,6 +4089,11 @@
     }
   },
   "arbitrum": {
+    "0x18f52b3fb465118731d9e0d276d4eb3599d57596": {
+      "decimals": "18",
+      "symbol": "AID",
+      "to": "asset#ethereum:0x18f52b3fb465118731d9e0d276d4eb3599d57596"
+    },
     "0xa39986f96b80d04e8d7aeaaf47175f47c23fd0f4": {
       "decimals": "6",
       "symbol": "rwaUSDi",
@@ -4958,6 +4968,11 @@
     }
   },
   "base": {
+    "0x18f52b3fb465118731d9e0d276d4eb3599d57596": {
+      "decimals": "18",
+      "symbol": "AID",
+      "to": "asset#ethereum:0x18f52b3fb465118731d9e0d276d4eb3599d57596"
+    },
     "0xd993935e13851dd7517af10687ec7e5022127228": {
       "decimals": "18",
       "symbol": "apxUSD",
