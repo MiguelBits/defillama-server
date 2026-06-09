@@ -643,6 +643,7 @@ const enum FinancialStatementRecords {
 }
 const enum FinancialStatementLabels {
   bribesRevenue = "Bribes Revenue",
+  bribesRewards = "Bribes Rewards",
 }
 const timeframes = ['yearly', 'quarterly', 'monthly'];
 const dataKeys = {
@@ -676,12 +677,26 @@ function adjustDataProtocolFinancials(data: any, emissionsData: any): any {
             adjustedAggregates[timeframe][timeKey][dataLabel] = (value as any)[dataKey]
           }
           
-          // add dbr to Others Token Holder Flows
-          if ((value as any)[AdaptorRecordType.dailyBribesRevenue]) {
+          const bribesRevenue = (value as any)[AdaptorRecordType.dailyBribesRevenue]
+          if (bribesRevenue) {
+            addFinancialStatementLabel(
+              adjustedAggregates[timeframe][timeKey],
+              FinancialStatementRecords.grossProtocolRevenue,
+              FinancialStatementLabels.bribesRewards,
+              bribesRevenue.value,
+            )
+            addFinancialStatementLabel(
+              adjustedAggregates[timeframe][timeKey],
+              FinancialStatementRecords.grossProfit,
+              FinancialStatementLabels.bribesRevenue,
+              bribesRevenue.value,
+            )
+
+            // add dbr to Others Token Holder Flows
             adjustedAggregates[timeframe][timeKey][FinancialStatementRecords.othersTokenHolderFlows] = {
-              value: (value as any)[AdaptorRecordType.dailyBribesRevenue].value,
+              value: bribesRevenue.value,
               'by-label': {
-                [FinancialStatementLabels.bribesRevenue]: (value as any)[AdaptorRecordType.dailyBribesRevenue].value,
+                [FinancialStatementLabels.bribesRevenue]: bribesRevenue.value,
               },
             }
           }
@@ -730,6 +745,15 @@ function adjustDataProtocolFinancials(data: any, emissionsData: any): any {
   }
 
   return data;
+
+  function addFinancialStatementLabel(record: any, recordKey: FinancialStatementRecords, label: FinancialStatementLabels, value: number) {
+    if (!record[recordKey]) record[recordKey] = { value: 0 }
+    else record[recordKey] = { ...record[recordKey] }
+
+    const labelKey = 'by-label'
+    record[recordKey][labelKey] = { ...(record[recordKey][labelKey] ?? {}) }
+    record[recordKey][labelKey][label] = value
+  }
 }
 
 function adjustMethodology(methodology: any): any {

@@ -7,7 +7,7 @@ import { protocolsById } from "../../protocols/data";
 import { parentProtocolsById } from "../../protocols/parentProtocols";
 
 function getFileCacheKeyV2(adapterType: AdapterType) {
-  return `dimensions-data-v3.0.10/${adapterType}`
+  return `dimensions-data-v3.0.11/${adapterType}`
 }
 
 async function _getDimensionsCacheV2(adapterType: AdapterType) {
@@ -134,12 +134,26 @@ export function transformDimensionRecord(json: DIMENSIONS_DB_RECORD) {
     // if (hasKeyWithValue) finalRecord.bl = json.bl
   }
 
+  addBribesRevenueToDailyRevenueAndFees()
+
   // reduce cummulative fields like totalVolume/totalFees etc these should be computed
   Object.keys(aggObject).forEach(key => {
     if (accumulativeRecordTypeSet.has(key as AdaptorRecordType)) delete aggObject[key as AdaptorRecordType]
   })
 
   return { ...rest, timeS, finalRecord }
+
+  // Temporary compatibility while dimensions adapters are being fixed to report bribes in dailyRevenue.
+  // Keep dailyBribesRevenue for existing consumers, but include it in dailyRevenue and dailyFees for API cache output.
+  function addBribesRevenueToDailyRevenueAndFees() {
+    const bribesRevenue = aggObject[AdaptorRecordType.dailyBribesRevenue]
+    if (!bribesRevenue) return;
+
+    addToRecord(AdaptorRecordType.dailyFees, bribesRevenue)
+    addToRecord(AdaptorRecordType.dailyRevenue, bribesRevenue)
+    addLabelBreakdownValue(AdaptorRecordType.dailyFees, 'Bribes Rewards', bribesRevenue.value)
+    addLabelBreakdownValue(AdaptorRecordType.dailyRevenue, 'Bribes Revenue', bribesRevenue.value)
+  }
 
   function addDerivedField(derivedField: AdaptorRecordType, parentField: AdaptorRecordType, otherField: AdaptorRecordType) {
     const agg = json.data.aggregated
@@ -155,6 +169,19 @@ export function transformDimensionRecord(json: DIMENSIONS_DB_RECORD) {
     agg[derivedField] = { value, chains }
   }
 
+  function addToRecord(recordType: AdaptorRecordType, dataRecord: DimensionsDataRecord) {
+    const record = aggObject[recordType]
+    if (!record) {
+      aggObject[recordType] = {
+        value: dataRecord.value,
+        chains: { ...(dataRecord.chains ?? {}) },
+      }
+    } else {
+      record.value += dataRecord.value
+      record.chains = sumNumMap(record.chains ?? {}, dataRecord.chains ?? {})
+    }
+  }
+
   function diffNumMap(a: Record<string, number>, b: Record<string, number>) {
     const out: Record<string, number> = {}
     const keys = new Set([...Object.keys(a), ...Object.keys(b)])
@@ -163,6 +190,22 @@ export function transformDimensionRecord(json: DIMENSIONS_DB_RECORD) {
       if (v >= 0) out[k] = v
     }
     return out
+  }
+
+  function sumNumMap(a: Record<string, number>, b: Record<string, number>) {
+    const out: Record<string, number> = {}
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)])
+    for (const k of keys) out[k] = (a[k] ?? 0) + (b[k] ?? 0)
+    return out
+  }
+
+  function addLabelBreakdownValue(recordType: AdaptorRecordType, label: string, value: number) {
+    const breakdownByLabel = json.bl ?? {}
+    json.bl = breakdownByLabel
+
+    const recordBreakdown = breakdownByLabel[recordType] ?? {}
+    breakdownByLabel[recordType] = recordBreakdown
+    recordBreakdown[label] = (recordBreakdown[label] ?? 0) + value
   }
 }
 
