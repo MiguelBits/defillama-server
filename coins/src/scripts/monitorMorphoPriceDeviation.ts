@@ -91,6 +91,8 @@ const ALLOWLIST: Record<string, string> = {
   "1:0x7309e1e2e74af170c69bde8fcb30397f8697d5ff": "wbravUSDC — oracle hardcodes $1.00; our price is the vault NAV (oracle conservative by design)",
   "1:0x238a700ed6165261cf8b2e544ba797bc11e466ba": "mF-ONE — Morpho oracle reads a deliberately discounted feed ('mF-ONE/USD Discounted', ~7.7% haircut, ~3d stale); our price is the live Midas NAV (matches CoinGecko)",
   "1:0x7f47c3e6b2c00fc4eb4d5ae50d0ab0ab6888eb4d": "PT-USD3-17DEC2026 — Morpho uses a conservative Pendle linear-discount oracle (accretes to par at maturity, ~12.7% below market); our price matches Pendle's own market (+0.07%)",
+  "1:0x3365554a61ceff74a76528f9e86c1e87946d16a5": "PT-apyUSD-18JUN2026 — our price matches Pendle's own PT market (~$0.93, within ~1.3%); Morpho oracle marks the PT ABOVE the live market (stale/low fixed-discount rate vs ~29% live implied APY). PT trades far below spot apyUSD (~$1.28) per Pendle's maturity-value expectation; our price is the accurate one",
+  "1:0xb5be35d8ff83d431899b95851cb17a2b4bcef150": "PT-apyUSD-5NOV2026 — same Apyx/apyUSD case as the 18JUN PT: our price matches Pendle's own PT market (~$0.877, within ~1.3%); Morpho oracle marks the PT above the live market. Pre-allowlisted (was -4.6%, just under threshold; same benign pattern)",
 };
 const allowReason = (chainId: number, collateralAddress: string, marketId: string): string | undefined =>
   ALLOWLIST[`${chainId}:${marketId.toLowerCase()}`] ?? ALLOWLIST[`${chainId}:${collateralAddress.toLowerCase()}`];
