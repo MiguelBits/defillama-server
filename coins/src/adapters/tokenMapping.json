@@ -1088,6 +1088,11 @@
     }
   },
   "ethereum": {
+    "0xad6250f0BD49F7a1eB11063af2cE9F25B9597b0F": {
+      "decimals": "6",
+      "symbol": "TBILL",
+      "to": "coingecko#openeden-tbill"
+    },
     "0xF7D85EC4E7710f71992752eac2111312e73E9C9C": {
       "decimals": "6",
       "symbol": "ftUSD",
