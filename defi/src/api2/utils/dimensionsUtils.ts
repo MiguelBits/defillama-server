@@ -144,15 +144,17 @@ export function transformDimensionRecord(json: DIMENSIONS_DB_RECORD) {
   return { ...rest, timeS, finalRecord }
 
   // Temporary compatibility while dimensions adapters are being fixed to report bribes in dailyRevenue.
-  // Keep dailyBribesRevenue for existing consumers, but include it in dailyRevenue and dailyFees for API cache output.
+  // Keep dailyBribesRevenue for existing consumers, but include it in core fee and revenue metrics for API cache output.
   function addBribesRevenueToDailyRevenueAndFees() {
     const bribesRevenue = aggObject[AdaptorRecordType.dailyBribesRevenue]
     if (!bribesRevenue) return;
 
     addToRecord(AdaptorRecordType.dailyFees, bribesRevenue)
     addToRecord(AdaptorRecordType.dailyRevenue, bribesRevenue)
+    addToRecord(AdaptorRecordType.dailyHoldersRevenue, bribesRevenue)
     addLabelBreakdownValue(AdaptorRecordType.dailyFees, 'Bribes Rewards', bribesRevenue.value)
     addLabelBreakdownValue(AdaptorRecordType.dailyRevenue, 'Bribes Revenue', bribesRevenue.value)
+    addLabelBreakdownValue(AdaptorRecordType.dailyHoldersRevenue, 'Bribes Revenue', bribesRevenue.value)
   }
 
   function addDerivedField(derivedField: AdaptorRecordType, parentField: AdaptorRecordType, otherField: AdaptorRecordType) {
@@ -206,6 +208,10 @@ export function transformDimensionRecord(json: DIMENSIONS_DB_RECORD) {
     const recordBreakdown = breakdownByLabel[recordType] ?? {}
     breakdownByLabel[recordType] = recordBreakdown
     recordBreakdown[label] = (recordBreakdown[label] ?? 0) + value
+
+    const record = aggObject[recordType]
+    if (!record) return;
+    record.labelBreakdown = recordBreakdown
   }
 }
 
