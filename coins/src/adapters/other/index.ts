@@ -227,6 +227,7 @@ export function manualInput(timestamp: number = 0) {
     manualInputAdapter("kava", timestamp),
     manualInputAdapter("polygon_zkevm", timestamp),
     manualInputAdapter("ethereum", timestamp),
+    manualInputAdapter("citrea", timestamp),
   ]);
 }
 export function realt(timestamp: number = 0) {

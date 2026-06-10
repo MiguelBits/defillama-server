@@ -140,6 +140,20 @@ const contracts: { [chain: string]: TokenInfo[] } = {
       redirect: "coingecko#kava",
     },
   ],
+  citrea: [
+    {
+      symbol: "USDT.e",
+      address: "0x9f3096bac87e7f03dc09b0b416eb0df837304dc4",
+      decimals: 6,
+      redirect: "coingecko#tether",
+    },
+    {
+      symbol: "wKcBTC",
+      address: "0xc778f3a8bcdf9f8daee9d0e8508af83e90e9b1f9",
+      decimals: 18,
+      redirect: "coingecko#bitcoin",
+    },
+  ],
   ethereum: [
     {
       symbol: "sdXAIFRAXBP3CRV-f-vault",
