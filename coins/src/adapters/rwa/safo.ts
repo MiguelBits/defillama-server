@@ -3,12 +3,34 @@ import { getApi } from "../utils/sdk";
 import { addToDBWritesList } from "../utils/database";
 import { checkOracleFresh, NAV_ORACLE_MAX_AGE_SECONDS } from "../utils/oracle";
 
+const latestRoundDataAbi =
+  "function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)";
+
+// Spiko Amundi Overnight Swap Fund NAV oracles (Chainlink-style, 6 decimals) on Arbitrum.
+// IMPORTANT: each oracle reports the share NAV in the fund's *base currency*, not USD —
+// SAFO=USD, eurSAFO=EUR, gbpSAFO=GBP, chfSAFO=CHF — so the non-USD NAVs (all ~1.0) must be
+// multiplied by the relevant FX rate before being stored as USD, or the funds are served
+// undervalued by the whole FX premium (eurSAFO ~13% low, gbpSAFO ~26% low, chfSAFO ~20% low).
 const oracles: { [symbol: string]: string } = {
   SAFO: "0x372e37cA79747A2d1671EDBC5f1e2853B96BA351",
   eurSAFO: "0x385D443ffA5b6Fb462b988D023a5DC3b37Ef1644",
   gbpSAFO: "0x835B48E97CBF727e23E7AA3bD40248818d20A2b0",
   chfSAFO: "0xD1F12049cC311DfB177f168046Ed8e2bd341a7AF",
 };
+
+// Chainlink FX feeds (Polygon, 8 decimals) converting each non-USD fund's native NAV into
+// USD — the same feeds the jarvis and cnht adapters use. An FX rate is chain-agnostic, so it
+// doesn't matter that the feeds live on Polygon while the funds trade elsewhere. The USD fund
+// (SAFO) is omitted here and priced at NAV directly.
+const FX_FEED_CHAIN = "polygon";
+const fxFeeds: { [symbol: string]: string } = {
+  eurSAFO: "0x73366Fe0AA0Ded304479862808e02506FE556a98", // EUR/USD
+  gbpSAFO: "0x099a2540848573e94fb1Ca0Fa420b00acbBc845a", // GBP/USD
+  chfSAFO: "0xc76f762CedF0F78a439727861628E0fdfE1e70c2", // CHF/USD
+};
+// Forex feeds idle over weekends/holidays — tolerate a few days before treating as stale (same
+// rationale as cnht.ts).
+const FX_MAX_AGE_SECONDS = 4 * 24 * 60 * 60;
 
 const config: { [symbol: string]: { [chain: string]: string } } = {
   SAFO: {
@@ -51,11 +73,27 @@ const config: { [symbol: string]: { [chain: string]: string } } = {
 
 export async function safo(timestamp: number = 0): Promise<Write[]> {
   const api = await getApi("arbitrum", timestamp);
+  const fxApi = await getApi(FX_FEED_CHAIN, timestamp);
   const symbols = Object.keys(oracles);
+  const fxSymbols = Object.keys(fxFeeds);
 
-  const results = await api.multiCall({
-    abi: "function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)",
-    calls: symbols.map((s) => oracles[s]),
+  const [results, fxResults] = await Promise.all([
+    api.multiCall({
+      abi: latestRoundDataAbi,
+      calls: symbols.map((s) => oracles[s]),
+    }),
+    fxApi.multiCall({
+      abi: latestRoundDataAbi,
+      calls: fxSymbols.map((s) => fxFeeds[s]),
+    }),
+  ]);
+
+  // symbol -> USD per unit of the fund's base currency. USD fund needs no conversion.
+  const fxRates: { [symbol: string]: number } = { SAFO: 1 };
+  fxSymbols.forEach((symbol, i) => {
+    const [, answer, , updatedAt] = fxResults[i];
+    if (!checkOracleFresh(updatedAt, { timestamp, label: `${symbol} FX`, throwIfStale: false, maxAgeSeconds: FX_MAX_AGE_SECONDS })) return;
+    fxRates[symbol] = Number(answer) / 1e8;
   });
 
   const writes: Write[] = [];
@@ -65,7 +103,12 @@ export async function safo(timestamp: number = 0): Promise<Write[]> {
     // Spiko NAVs only post on business days — tolerate the weekend gap (see NAV_ORACLE_MAX_AGE_SECONDS).
     if (!checkOracleFresh(updatedAt, { timestamp, label: symbol, throwIfStale: false, maxAgeSeconds: NAV_ORACLE_MAX_AGE_SECONDS })) return;
 
-    const price = answer / 1e6;
+    // Skip a fund whose FX rate is missing/stale rather than store its native NAV (~$1) as USD,
+    // which would silently undervalue it. SAFO is USD (fxRate 1) and is never skipped here.
+    const fxRate = fxRates[symbol];
+    if (fxRate === undefined) return;
+
+    const price = (answer / 1e6) * fxRate;
     const chains = config[symbol];
     const arbitrumAddress = chains["arbitrum"];
 

@@ -13,6 +13,7 @@ import { cairoErc20Abis, call, feltArrToStr } from "../adapters/utils/starknet";
 export const cgIdDenylist = new Set<string>([
   'apxusd',              // priced via the deep Curve apxUSD/USDC pool (+ base redirect via tokenMapping.json)
   'wrapped-staked-link', // wstLINK — priced by the wstlink adapter (getUnderlyingByWrapped × LINK)
+  'universal-btc',       // uniBTC — CG mark intermittently glitches to a bogus ~$93k; priced by bedrockUniBTC (1:1 × Chainlink BTC/USD), other chains redirect to ethereum via tokenMapping.json
 ]);
 
 // Chains where we have no working metadata fetch path. Tokens on these chains
