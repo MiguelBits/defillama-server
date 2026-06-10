@@ -6,7 +6,7 @@ import { initPG, fetchLatestAggregateTotals, fetchCumulativeFundingPG, fetchLate
 import { sendMessage } from "../../utils/discord";
 import { getAllAdapters, getAdapter } from "./platforms";
 import type { ParsedPerpsMarket, FundingEntry } from "./platforms";
-import { normalizeOpenInterestUsd } from "./platforms/types";
+import { normalizeOpenInterestUsd, normalizeFundingRateHourly } from "./platforms/types";
 import {
   getContractId,
   getContractMetadata,
@@ -171,6 +171,11 @@ export async function main(ts: number = 0): Promise<void> {
       const adapter = getAdapter(market.platform);
       const openInterest = normalizeOpenInterestUsd(market, adapter);
 
+      // Funding normalization: venues settle on different cadences (1h for most,
+      // 4h edgeX, 8h Aster, per-market Variational). Store every rate per-1h so
+      // they're comparable across venues. Same helper the preview HTML uses.
+      const fundingRate = normalizeFundingRateHourly(market.fundingRate, market.fundingIntervalHours);
+
       finalData[marketId] = {
         contract: market.contract,
         venue: metadata.parentPlatform ?? market.venue,
@@ -178,7 +183,7 @@ export async function main(ts: number = 0): Promise<void> {
         volume24h: market.volume24h,
         price: market.markPx,
         priceChange24h: market.priceChange24h,
-        fundingRate: market.fundingRate,
+        fundingRate,
         premium: market.premium,
         cumulativeFunding,
         data: {
@@ -187,6 +192,10 @@ export async function main(ts: number = 0): Promise<void> {
           prevDayPx: market.prevDayPx,
           maxLeverage: market.maxLeverage,
           szDecimals: market.szDecimals,
+          // Native funding cadence (hours) the per-1h `fundingRate` was derived
+          // from; null when the venue has no fixed-period funding. Lets consumers
+          // recover the raw per-period rate (= fundingRate × fundingIntervalHours).
+          fundingIntervalHours: market.fundingIntervalHours ?? 1,
           makerFeeRate: makerFee,
           takerFeeRate: takerFee,
           volume7d,

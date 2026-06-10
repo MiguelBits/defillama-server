@@ -169,6 +169,7 @@ function parseAsterMarkets(
       prevDayPx: openPx,
       priceChange24h: pctChange(lastPx, openPx),
       fundingRate: safeFloat(premium?.lastFundingRate),
+      fundingIntervalHours: 8, // Aster funds every 8h
       premium: premiumDecimal,
       // Aster's /leverageBracket is auth-gated, and `requiredMarginPercent` on
       // /exchangeInfo is 5% across all symbols (BTC = AAPL = XAU = …) so it's

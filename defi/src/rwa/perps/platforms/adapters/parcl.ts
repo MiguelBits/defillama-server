@@ -193,6 +193,10 @@ export function parseParclMarkets(
       prevDayPx: 0,
       priceChange24h: 0,
       fundingRate: safeFloat(m.fundingRate),
+      // Parcl uses a continuous funding-velocity model (Synthetix/Perp-v2 style),
+      // not fixed-period settlement — its rate isn't a per-interval fraction, so
+      // mark it null to pass through unnormalized rather than assume 1h.
+      fundingIntervalHours: null,
       premium,
       maxLeverage: null,
       szDecimals: 0,

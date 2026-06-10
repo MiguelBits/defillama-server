@@ -6,6 +6,12 @@
  *
  * Usage:
  *   npx ts-node defi/src/rwa/perps/cli/previewAdapters.ts
+ *   npx ts-node defi/src/rwa/perps/cli/previewAdapters.ts --only ondo-perps
+ *   npx ts-node defi/src/rwa/perps/cli/previewAdapters.ts --only ondo-perps,apex
+ *
+ * `--only <name[,name...]>` restricts which adapters run (case-insensitive) for a
+ * fast, focused single-venue preview, and writes to adapter-preview-<names>.html
+ * so it never clobbers the full adapter-preview.html. Default runs every adapter.
  */
 
 import { getAllAdaptersIncludingUnpublished } from "../platforms";
@@ -13,7 +19,7 @@ import type { ParsedPerpsMarket } from "../platforms/types";
 // Import the SAME OI-normalization the prod pipeline uses (perps.ts) so the
 // preview can never drift from production. Per project memory, visualisers
 // must mirror prod exactly — never re-implement transforms here.
-import { normalizeOpenInterestUsd } from "../platforms/types";
+import { normalizeOpenInterestUsd, normalizeFundingRateHourly } from "../platforms/types";
 import fs from "fs";
 import path from "path";
 
@@ -25,8 +31,22 @@ interface AdapterResult {
   oiIsNotional: boolean;
 }
 
+function parseOnlyFilter(): Set<string> | null {
+  const argv = process.argv.slice(2);
+  const flagIdx = argv.indexOf("--only");
+  const raw = flagIdx >= 0 ? argv[flagIdx + 1] : argv.find((a) => !a.startsWith("-"));
+  if (!raw) return null;
+  return new Set(raw.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
+}
+
 async function main() {
-  const adapters = getAllAdaptersIncludingUnpublished();
+  const allAdapters = getAllAdaptersIncludingUnpublished();
+  const onlySet = parseOnlyFilter();
+  const adapters = onlySet ? allAdapters.filter((a) => onlySet.has(a.name.toLowerCase())) : allAdapters;
+  if (adapters.length === 0) {
+    console.error(`No adapters matched "${[...(onlySet ?? [])].join(", ")}". Available: ${allAdapters.map((a) => a.name).join(", ")}`);
+    process.exit(1);
+  }
   console.log(`Running ${adapters.length} adapters: ${adapters.map((a) => a.name).join(", ")}\n`);
 
   const results: AdapterResult[] = [];
@@ -52,7 +72,8 @@ async function main() {
   results.sort((a, b) => a.name.localeCompare(b.name));
 
   const html = generateHTML(results);
-  const outPath = path.join(__dirname, "adapter-preview.html");
+  const fileName = onlySet ? `adapter-preview-${[...onlySet].join("-").replace(/[^a-z0-9-]/gi, "")}.html` : "adapter-preview.html";
+  const outPath = path.join(__dirname, fileName);
   fs.writeFileSync(outPath, html, "utf-8");
   console.log(`\nPreview written to ${outPath}`);
 
@@ -101,6 +122,10 @@ function fmtPct(n: number): string {
 // render time (see defillama-app `Dashboard.tsx`); the preview must match.
 // → multiply funding/premium by 100 before passing to fmtPct;
 //   priceChange24h is already a %.
+// Funding is also period-normalized to per-1h via normalizeFundingRateHourly
+// (the same helper perps.ts uses), so the "Funding /1h" column matches what the
+// pipeline stores. The "Intvl" column shows each venue's native settlement
+// period for transparency.
 
 function generateHTML(results: AdapterResult[]): string {
   // Look up oiIsNotional per adapter so OI rendering can be normalized to USD.
@@ -108,7 +133,11 @@ function generateHTML(results: AdapterResult[]): string {
   for (const r of results) oiNotionalByAdapter.set(r.name, r.oiIsNotional);
 
   const allMarkets = results.flatMap((r) =>
-    r.markets.map((m) => ({ ...m, oiUsd: normalizeOpenInterestUsd(m, { oiIsNotional: r.oiIsNotional }) }))
+    r.markets.map((m) => ({
+      ...m,
+      oiUsd: normalizeOpenInterestUsd(m, { oiIsNotional: r.oiIsNotional }),
+      fundingRate1h: normalizeFundingRateHourly(m.fundingRate, m.fundingIntervalHours),
+    }))
   );
   const totalOI = allMarkets.reduce((s, m) => s + m.oiUsd, 0);
   const totalVol = allMarkets.reduce((s, m) => s + m.volume24h, 0);
@@ -299,7 +328,8 @@ ${issues.length === 0
   <th data-col="priceChange24h" class="num">24h Chg%</th>
   <th data-col="openInterest" class="num">Open Interest</th>
   <th data-col="volume24h" class="num">Volume 24h</th>
-  <th data-col="fundingRate" class="num">Funding Rate</th>
+  <th data-col="fundingRate" class="num">Funding /1h</th>
+  <th data-col="fundingIntervalHours" class="num">Intvl</th>
   <th data-col="makerFeeRate" class="num">Maker Fee</th>
   <th data-col="takerFeeRate" class="num">Taker Fee</th>
   <th data-col="maxLeverage" class="num">Max Lev</th>
@@ -322,7 +352,8 @@ ${allMarkets.map((m) => {
   <td class="num ${chgClass}">${fmtPct(m.priceChange24h)}</td>
   <td class="num ${oiClass}">${fmtUSD(m.oiUsd)}</td>
   <td class="num ${volClass}">${fmtUSD(m.volume24h)}</td>
-  <td class="num">${fmtPct(m.fundingRate * 100)}</td>
+  <td class="num">${fmtPct(m.fundingRate1h * 100)}</td>
+  <td class="num">${m.fundingIntervalHours === null ? "—" : m.fundingIntervalHours === undefined ? "1h" : m.fundingIntervalHours < 1 ? Math.round(m.fundingIntervalHours * 60) + "m" : m.fundingIntervalHours + "h"}</td>
   <td class="num">${m.makerFeeRate == null ? "—" : fmtPct(m.makerFeeRate * 100)}</td>
   <td class="num">${m.takerFeeRate == null ? "—" : fmtPct(m.takerFeeRate * 100)}</td>
   <td class="num">${m.maxLeverage ? Math.round(m.maxLeverage) + "×" : "—"}</td>

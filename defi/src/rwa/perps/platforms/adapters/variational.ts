@@ -107,6 +107,9 @@ export function parseVariationalMarkets(listings: VariationalListing[]): ParsedP
       prevDayPx: 0,
       priceChange24h: 0,
       fundingRate: annualizedFundingToPeriod(listing.funding_rate, listing.funding_interval_s),
+      // funding_rate above is the per-interval rate; expose the interval (hours)
+      // so the pipeline can normalize it to per-1h. null when absent (rate is 0).
+      fundingIntervalHours: listing.funding_interval_s ? listing.funding_interval_s / 3600 : null,
       premium: 0,
       maxLeverage: VARIATIONAL_MAX_LEVERAGE,
       szDecimals: 0,

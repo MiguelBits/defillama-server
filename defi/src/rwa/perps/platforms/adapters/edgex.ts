@@ -177,6 +177,7 @@ function parseEdgeXMarket(
     prevDayPx: safeFloat(t.open),
     priceChange24h: pct,
     fundingRate: runningFunding,
+    fundingIntervalHours: 4, // edgeX settles funding every 4h (fundingRateIntervalMin: 240)
     premium: funding ? safeFloat(funding.premiumIndex) : 0,
     maxLeverage: safeFloat(c.displayMaxLeverage),
     szDecimals: 0,

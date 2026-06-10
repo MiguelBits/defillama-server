@@ -26,7 +26,10 @@ export interface ParsedPerpsMarket {
   prevDayPx: number;
   /** 24h price change as a percentage (e.g., 2.5 means +2.5%) */
   priceChange24h: number;
-  /** Current funding rate (per the platform's native period — 1h or 8h) */
+  /** Current funding rate in the platform's NATIVE per-period terms (1h for most
+   *  venues, 4h edgeX, 8h Aster, per-market Variational). The pipeline normalizes
+   *  this to per-1h via `normalizeFundingRateHourly` using `fundingIntervalHours`
+   *  below — adapters should emit the raw native rate here, not pre-normalize. */
   fundingRate: number;
   /** Premium over index (0 if not applicable) */
   premium: number;
@@ -41,6 +44,17 @@ export interface ParsedPerpsMarket {
   makerFeeRate?: number | null;
   /** Optional venue-sourced taker fee rate; falls back to Airtable metadata. */
   takerFeeRate?: number | null;
+  /**
+   * Native funding settlement interval in hours. `fundingRate` above is each
+   * venue's raw per-period rate, and the period differs across venues (1h for
+   * most, 4h for edgeX, 8h for Aster, per-market for Variational). The pipeline
+   * divides by this to express every funding rate per 1h (see
+   * `normalizeFundingRateHourly`).
+   *   - omit / `undefined` → treated as 1h (the dominant native period).
+   *   - `null`             → venue has no fixed-period funding (borrowing-fee /
+   *                          adaptive / velocity model); rate passed through as-is.
+   */
+  fundingIntervalHours?: number | null;
 }
 
 export interface FundingEntry {
@@ -127,4 +141,33 @@ export function normalizeOpenInterestUsd(
   return adapter?.oiIsNotional
     ? market.openInterest
     : market.openInterest * market.markPx;
+}
+
+/**
+ * Normalize a funding rate to a per-1-hour rate.
+ *
+ * `fundingRate` on ParsedPerpsMarket is the venue's NATIVE per-period rate, and
+ * the period differs across venues (1h for most, 4h edgeX, 8h Aster, per-market
+ * Variational). Comparing raw rates is apples-to-oranges, so we divide by the
+ * venue's settlement interval in hours to put every rate on a per-1h basis.
+ *
+ * `intervalHours`:
+ *   - positive number   → divide (e.g. an 8h Aster rate ÷ 8 = hourly).
+ *   - `undefined`        → assume 1h (the dominant native period) → unchanged.
+ *   - `null` / ≤0 / NaN  → venue has no fixed-period funding (borrowing-fee /
+ *                          adaptive / velocity model) → passed through unchanged.
+ *
+ * SINGLE SOURCE OF TRUTH for funding normalization. The prod pipeline
+ * (`perps.ts`) and the preview HTML (`cli/previewAdapters.ts`) BOTH call this —
+ * do not inline the division anywhere else.
+ */
+export function normalizeFundingRateHourly(
+  fundingRate: number,
+  intervalHours: number | null | undefined,
+): number {
+  if (intervalHours === undefined) return fundingRate; // assume already hourly
+  if (intervalHours === null || !Number.isFinite(intervalHours) || intervalHours <= 0) {
+    return fundingRate; // no fixed-period funding — leave as-is
+  }
+  return fundingRate / intervalHours;
 }

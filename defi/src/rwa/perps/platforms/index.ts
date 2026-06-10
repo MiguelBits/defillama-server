@@ -14,6 +14,7 @@ import { apexAdapter } from "./adapters/apex";
 import { gmtradeAdapter } from "./adapters/gmtrade";
 import { variationalAdapter } from "./adapters/variational";
 import { parclAdapter } from "./adapters/parcl";
+import { ondoperpsAdapter } from "./adapters/ondoperps";
 
 /** All implemented adapters — used by preview tooling and tests. */
 const ALL_ADAPTERS: PlatformAdapter[] = [
@@ -30,6 +31,7 @@ const ALL_ADAPTERS: PlatformAdapter[] = [
   gmtradeAdapter,
   variationalAdapter,
   parclAdapter,
+  ondoperpsAdapter,
 ];
 
 /** Adapters that are live in the pipeline / cron / API. */
@@ -46,6 +48,7 @@ const PUBLISHED_ADAPTERS: PlatformAdapter[] = [
   gmtradeAdapter,
   variationalAdapter,
   parclAdapter,
+  ondoperpsAdapter,
 ];
 
 const ADAPTER_MAP = new Map<string, PlatformAdapter>(

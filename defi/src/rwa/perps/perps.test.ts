@@ -54,6 +54,14 @@ import {
   VARIATIONAL_TAKER_FEE,
   type VariationalListing,
 } from "./platforms/adapters/variational";
+import {
+  parseOndoPerpsMarkets,
+  ONDO_PERPS_MAKER_FEE,
+  ONDO_PERPS_TAKER_FEE,
+  type OndoContract,
+  type OndoMarketSpec,
+} from "./platforms/adapters/ondoperps";
+import { normalizeFundingRateHourly } from "./platforms/types";
 import { getCsvData } from "../spreadsheet";
 
 // ── utils.ts ──────────────────────────────────────────────────────────────────
@@ -642,9 +650,136 @@ describe("parseVariationalMarkets", () => {
     expect(xau.oraclePx).toBe(0);
     expect(xau.midPx).toBe(4498);
     expect(xau.fundingRate).toBeCloseTo(0.084694 / 2190);
+    expect(xau.fundingIntervalHours).toBe(4); // funding_interval_s 14400 = 4h
     expect(xau.maxLeverage).toBe(VARIATIONAL_MAX_LEVERAGE);
     expect(xau.makerFeeRate).toBe(VARIATIONAL_MAKER_FEE);
     expect(xau.takerFeeRate).toBe(VARIATIONAL_TAKER_FEE);
+  });
+});
+
+// ── ondoperps.ts parsers ──────────────────────────────────────────────────────
+
+describe("parseOndoPerpsMarkets", () => {
+  const contracts: OndoContract[] = [
+    {
+      market: "XAU-USD.P",
+      baseCurrency: "XAU",
+      quoteCurrency: "USD",
+      disabled: false,
+      lastPrice: "4176",
+      quoteVolume: "12454862.13",
+      usdVolume: "12454862.13",
+      bid: "4175",
+      ask: "4177",
+      openInterest: "527.5",
+      openInterestUsd: "2202749.46",
+      indexPrice: "4180",
+      fundingRate: "0.0000063",
+      makerFee: "0.00015",
+      takerFee: "0.00035",
+      priceChangePercent: "-2",
+      tags: ["Commodity"],
+    },
+    {
+      market: "AAPL-USD.P",
+      baseCurrency: "AAPL",
+      quoteCurrency: "USD",
+      disabled: false,
+      lastPrice: "291.18",
+      quoteVolume: "696403.5588",
+      bid: "291.14",
+      ask: "291.24",
+      openInterestUsd: "47738.96",
+      indexPrice: "290.30",
+      fundingRate: "0.0000063",
+      makerFee: "0.00015",
+      takerFee: "0.00035",
+      priceChangePercent: "-3.17",
+      tags: ["Stock"],
+    },
+    {
+      // Disabled markets report $0 price/OI and must be skipped.
+      market: "MU-USD.P",
+      baseCurrency: "MU",
+      disabled: true,
+      lastPrice: "0",
+      openInterestUsd: "0",
+      tags: ["Stock"],
+    },
+  ];
+
+  const specs: OndoMarketSpec[] = [
+    { market: "XAU-USD.P", baseIncrement: "0.001", defaultLeverage: "20", marginInfo: [{ maxLeverage: "20" }] },
+    { market: "AAPL-USD.P", baseIncrement: "0.01", defaultLeverage: "20", marginInfo: [{ maxLeverage: "20" }] },
+  ];
+
+  it("keeps enabled RWA markets and skips disabled ones", () => {
+    const parsed = parseOndoPerpsMarkets(contracts, specs);
+    expect(parsed).toHaveLength(2);
+    expect(parsed[0].contract).toBe("ondo-perps:XAU");
+    expect(parsed[0].venue).toBe("ondo-perps");
+    expect(parsed[0].platform).toBe("ondo-perps");
+    expect(parsed.map((m) => m.contract)).not.toContain("ondo-perps:MU");
+  });
+
+  it("maps contract ticker and market-spec fields", () => {
+    const [xau] = parseOndoPerpsMarkets(contracts, specs);
+    expect(xau.openInterest).toBe(2202749.46); // openInterestUsd, oiIsNotional
+    expect(xau.volume24h).toBe(12454862.13); // quoteVolume
+    expect(xau.markPx).toBe(4176);
+    expect(xau.oraclePx).toBe(4180); // indexPrice
+    expect(xau.midPx).toBeCloseTo((4175 + 4177) / 2);
+    expect(xau.premium).toBeCloseTo((4176 - 4180) / 4180);
+    expect(xau.priceChange24h).toBe(-2);
+    expect(xau.prevDayPx).toBeCloseTo(4176 / 0.98);
+    expect(xau.fundingRate).toBe(0.0000063);
+    expect(xau.fundingIntervalHours).toBe(1); // Ondo funds hourly
+    expect(xau.maxLeverage).toBe(20);
+    expect(xau.szDecimals).toBe(3); // from baseIncrement "0.001"
+    expect(xau.makerFeeRate).toBe(0.00015);
+    expect(xau.takerFeeRate).toBe(0.00035);
+  });
+
+  it("falls back to default fees and null leverage when not exposed", () => {
+    const [m] = parseOndoPerpsMarkets([
+      { market: "WTI-USD.P", baseCurrency: "WTI", lastPrice: "86.88", openInterestUsd: "508759.97" },
+    ]);
+    expect(m.makerFeeRate).toBe(ONDO_PERPS_MAKER_FEE);
+    expect(m.takerFeeRate).toBe(ONDO_PERPS_TAKER_FEE);
+    expect(m.maxLeverage).toBeNull();
+    expect(m.szDecimals).toBe(0);
+  });
+});
+
+// ── funding-rate normalization (platforms/types.ts) ───────────────────────────
+
+describe("normalizeFundingRateHourly", () => {
+  it("divides an 8h rate (Aster) to per-1h", () => {
+    expect(normalizeFundingRateHourly(0.0008, 8)).toBeCloseTo(0.0001);
+  });
+
+  it("divides a 4h rate (edgeX) to per-1h", () => {
+    expect(normalizeFundingRateHourly(0.0004, 4)).toBeCloseTo(0.0001);
+  });
+
+  it("converts a per-interval rate (Variational 4h) to per-1h", () => {
+    // Variational emits the per-interval rate; intervalHours = interval_s/3600.
+    expect(normalizeFundingRateHourly(0.084694 / 2190, 14400 / 3600)).toBeCloseTo(0.084694 / 2190 / 4);
+  });
+
+  it("leaves an hourly rate unchanged (undefined interval ⇒ assume 1h)", () => {
+    expect(normalizeFundingRateHourly(0.0000063, undefined)).toBe(0.0000063);
+    expect(normalizeFundingRateHourly(0.0000063, 1)).toBe(0.0000063);
+  });
+
+  it("passes through when the venue has no fixed-period funding (null/0/NaN)", () => {
+    expect(normalizeFundingRateHourly(0.03, null)).toBe(0.03); // Parcl velocity model
+    expect(normalizeFundingRateHourly(0.03, 0)).toBe(0.03);
+    expect(normalizeFundingRateHourly(0.03, NaN)).toBe(0.03);
+  });
+
+  it("keeps zero funding at zero regardless of interval", () => {
+    expect(normalizeFundingRateHourly(0, 8)).toBe(0);
   });
 });
 
