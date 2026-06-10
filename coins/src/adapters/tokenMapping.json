@@ -251,7 +251,7 @@
     "0xC3827A4BC8224ee2D116637023b124CED6db6e90": {
       "decimals": "8",
       "symbol": "uniBTC",
-      "to": "coingecko#universal-btc"
+      "to": "asset#ethereum:0x004e9c3ef86bc1ca1f0bb5c7662861ee93350568"
     },
     "0x850CDF416668210ED0c36bfFF5d21921C7adA3b8": {
       "decimals": "18",
@@ -2916,7 +2916,7 @@
       "to": "coingecko#usda"
     },
     "0x6B2a01A5f79dEb4c2f3c0eDa7b01DF456FbD726a": {
-      "to": "coingecko#universal-btc",
+      "to": "asset#ethereum:0x004e9c3ef86bc1ca1f0bb5c7662861ee93350568",
       "decimals": 8,
       "symbol": "uniBTC"
     },
@@ -4375,7 +4375,7 @@
       "to": "asset#ethereum:0x1494ca1f11d487c2bbe4543e90080aeba4ba3c2b"
     },
     "0x6B2a01A5f79dEb4c2f3c0eDa7b01DF456FbD726a": {
-      "to": "coingecko#universal-btc",
+      "to": "asset#ethereum:0x004e9c3ef86bc1ca1f0bb5c7662861ee93350568",
       "decimals": 8,
       "symbol": "uniBTC"
     },
@@ -5737,7 +5737,7 @@
     "0xf764dbfd6999067ac052a8e722ae359bec389bd7dba19ead586801b99b81b075": {
       "decimals": "8",
       "symbol": "uniBTC",
-      "to": "coingecko#universal-btc"
+      "to": "asset#ethereum:0x004e9c3ef86bc1ca1f0bb5c7662861ee93350568"
     },
     "0xf599112bc3a5b6092469890d6a2f353f485a6193c9d36626b480704467d3f4c8": {
       "decimals": "8",
@@ -6780,7 +6780,7 @@
       "symbol": "sUSDa"
     },
     "0x93919784C523f39CACaa98Ee0a9d96c3F32b593e": {
-      "to": "coingecko#universal-btc",
+      "to": "asset#ethereum:0x004e9c3ef86bc1ca1f0bb5c7662861ee93350568",
       "decimals": 18,
       "symbol": "uniBTC"
     },
@@ -7096,7 +7096,7 @@
   },
   "ibc": {
     "3F1D988D9EEA19EB0F3950B4C19664218031D8BCE68CE7DE30F187D5ACEA0463": {
-      "to": "coingecko#universal-btc",
+      "to": "asset#ethereum:0x004e9c3ef86bc1ca1f0bb5c7662861ee93350568",
       "decimals": 8,
       "symbol": "uniBTC"
     },
@@ -9873,7 +9873,7 @@
       "symbol": "wstETH"
     },
     "0x78E26E8b953C7c78A58d69d8B9A91745C2BbB258": {
-      "to": "coingecko#universal-btc",
+      "to": "asset#ethereum:0x004e9c3ef86bc1ca1f0bb5c7662861ee93350568",
       "decimals": 18,
       "symbol": "uBTC"
     },
@@ -10190,7 +10190,7 @@
       "symbol": "xSolvBTC"
     },
     "0x236f8c0a61dA474dB21B693fB2ea7AAB0c803894": {
-      "to": "coingecko#universal-btc",
+      "to": "asset#ethereum:0x004e9c3ef86bc1ca1f0bb5c7662861ee93350568",
       "decimals": 8,
       "symbol": "uniBTC"
     },
@@ -13256,7 +13256,7 @@
       "symbol": "swBTC"
     },
     "0xFA3198ecF05303a6d96E57a45E6c815055D255b1": {
-      "to": "coingecko#universal-btc",
+      "to": "asset#ethereum:0x004e9c3ef86bc1ca1f0bb5c7662861ee93350568",
       "decimals": 18,
       "symbol": "uBTC"
     },
@@ -14140,7 +14140,7 @@
     "0xF9775085d726E782E83585033B58606f7731AB18": {
       "decimals": "8",
       "symbol": "uniBTC",
-      "to": "coingecko#universal-btc"
+      "to": "asset#ethereum:0x004e9c3ef86bc1ca1f0bb5c7662861ee93350568"
     },
     "0x6c851f501a3f24e29a8e39a29591cddf09369080": {
       "to": "coingecko#dai",
@@ -15568,7 +15568,7 @@
       "to": "coingecko#resolv-wstusr"
     },
     "0xF9775085d726E782E83585033B58606f7731AB18": {
-      "to": "coingecko#universal-btc",
+      "to": "asset#ethereum:0x004e9c3ef86bc1ca1f0bb5c7662861ee93350568",
       "decimals": 8,
       "symbol": "uniBTC"
     },

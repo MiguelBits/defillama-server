@@ -29,6 +29,7 @@ export default {
   jupAg: require("./solana/jupAg"),
   midas: require("./rwa/midas"),
   wstlink: require("./other/wstlink"),
+  bedrockUniBTC: require("./other/bedrockUniBTC"),
   stobox: require("./rwa/stobox"),
   alex: require("./markets/alex"),
   seamless: require("./other/seamless"),
