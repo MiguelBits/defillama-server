@@ -195,7 +195,8 @@ export async function main(ts: number = 0): Promise<void> {
           // Native funding cadence (hours) the per-1h `fundingRate` was derived
           // from; null when the venue has no fixed-period funding. Lets consumers
           // recover the raw per-period rate (= fundingRate × fundingIntervalHours).
-          fundingIntervalHours: market.fundingIntervalHours ?? 1,
+          fundingIntervalHours:
+            market.fundingIntervalHours === undefined ? 1 : market.fundingIntervalHours,
           makerFeeRate: makerFee,
           takerFeeRate: takerFee,
           volume7d,

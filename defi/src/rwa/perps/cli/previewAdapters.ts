@@ -34,7 +34,14 @@ interface AdapterResult {
 function parseOnlyFilter(): Set<string> | null {
   const argv = process.argv.slice(2);
   const flagIdx = argv.indexOf("--only");
-  const raw = flagIdx >= 0 ? argv[flagIdx + 1] : argv.find((a) => !a.startsWith("-"));
+  if (flagIdx >= 0) {
+    const rawFlagValue = argv[flagIdx + 1];
+    if (!rawFlagValue || rawFlagValue.startsWith("-")) {
+      throw new Error("Missing value for --only. Usage: --only <name[,name...]>");
+    }
+    return new Set(rawFlagValue.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
+  }
+  const raw = argv.find((a) => !a.startsWith("-"));
   if (!raw) return null;
   return new Set(raw.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
 }
