@@ -1,12 +1,9 @@
 /**
  * Satsuma DEX (Citrea) token prices for the DefiLlama coins API.
  *
- * Citrea tokens are not on CoinGecko / other coins adapters, so Satsuma TVL was
- * valued at ~$0. This adapter prices every token Satsuma holds:
- *   - Stablecoins (ctUSD, USDC.e, USDT.e, GUSD) are anchored to $1.
- *   - Everything else (WCBTC, WBTC.e, wKcBTC, CTR, SUMA, SHITREA, ZNT, s33) is
- *     derived on-chain from Satsuma's Algebra pools, chaining off the $1 anchors,
- *     so no external coin needs to pre-exist.
+ * Some Satsuma Citrea tokens are already live in the coins API. This adapter
+ * uses those prices as anchors, but only writes tokens that are still missing
+ * and needed for Satsuma TVL / vault assets.
  *
  * Copy to: defillama-server/coins/src/adapters/other/satsumaCitrea.ts
  * Register in: coins/src/adapters/other/index.ts (see coins-pr/README.md).
@@ -38,6 +35,18 @@ const SYMBOLS: Record<string, string> = {
   "0xd2dd3dac986cd8256a51d9e3dbcb9151f0aeeb41": "SHITREA",
   "0xbc249b89a877018080e7d381524d34cd0ddc27b8": "ZNT",
   "0xdba0f380509a3e7562c029f308e9867021d32af0": "s33",
+};
+
+// Live coins API already prices ctUSD, USDC.e, WCBTC, WBTC.e, and CTR. Only
+// write the gaps needed for Satsuma TVL / vault assets.
+const OUTPUT_TOKENS: Record<string, true> = {
+  "0x9f3096bac87e7f03dc09b0b416eb0df837304dc4": true, // USDT.e
+  "0xac8c1aeb584765db16ac3e08d4736cfce198589b": true, // GUSD
+  "0xc778f3a8bcdf9f8daee9d0e8508af83e90e9b1f9": true, // wKcBTC
+  "0x60bf948001e7b7ea03ddaaddae048af7402e7b74": true, // SUMA
+  "0xd2dd3dac986cd8256a51d9e3dbcb9151f0aeeb41": true, // SHITREA
+  "0xbc249b89a877018080e7d381524d34cd0ddc27b8": true, // ZNT
+  "0xdba0f380509a3e7562c029f308e9867021d32af0": true, // s33
 };
 
 // Algebra pools used to derive non-stable prices. Each pool pairs an
@@ -127,6 +136,7 @@ async function getTokenPrices(timestamp: number) {
   const stableObject: { [key: string]: any } = {};
   const derivedObject: { [key: string]: any } = {};
   for (const token of tokens) {
+    if (!OUTPUT_TOKENS[token]) continue;
     const price = prices[token];
     if (price == null || !Number.isFinite(price) || price <= 0) continue;
     const entry = {
